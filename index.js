@@ -93,29 +93,83 @@ function roadAt(m, point) {
   return m.queryRenderedFeatures(point, {layers: ids}).find((f) => f.sourceLayer === "roads") || null;
 }
 
+// The page's road popup and hover (its popup.css / popup.js and its settings, style metadata roadstyle:interaction): the click
+// selects a road (feature-state select) and opens its popup; resting the mouse on a road for the page's delay lights it up
+// (feature-state hover) and shows its tooltip, when the page has one.
+let rsUI = null;                     // {inter, rfields, POPUP}
+let selected = null, tip = null, tipTimer = 0, tipKey = null;
+async function loadUI(inter) {
+  if (rsUI || !inter) return;
+  if (!document.querySelector('link[data-roadstyle="popup"]')) {
+    const link = Object.assign(document.createElement("link"), {rel: "stylesheet", href: inter.css});
+    link.dataset.roadstyle = "popup";
+    document.head.appendChild(link);
+  }
+  const mod = await import(inter.js);
+  rsUI = {inter, rfields: mod._rfields, POPUP: mod.POPUP};
+}
+function fid(f) { return f && f.id != null ? {source: f.source, sourceLayer: "roads", id: f.id} : null; }
+function setState(m, k, st) { if (k) m.setFeatureState(k, st); }
+// a popup in MapLibre's own markup (the page's popup.css styles it under .rs-plugin), kept at its place on the map
+function makePopup(m, lngLat, html, opts) {
+  const wrap = document.createElement("div");
+  wrap.className = "rs-plugin";
+  wrap.innerHTML = `<div class="maplibregl-popup maplibregl-popup-anchor-bottom ${opts.className || ""}" style="max-width:${rsUI.POPUP.maxWidth}">` +
+    `<div class="maplibregl-popup-tip"></div><div class="maplibregl-popup-content">${html}` +
+    (opts.close ? '<button class="maplibregl-popup-close-button" type="button" aria-label="Close popup">×</button>' : "") + "</div></div>";
+  const el = wrap.firstChild;
+  const place = () => { const p = m.project(pop.lngLat); el.style.transform = `translate(-50%,-100%) translate(${p.x}px,${p.y - (opts.offset || 0)}px)`; };
+  const pop = {lngLat, el: wrap, setLngLat(ll) { pop.lngLat = ll; place(); return pop; },
+               remove() { m.off("move", place); wrap.remove(); }};
+  if (opts.close) el.querySelector("button").onclick = () => { pop.remove(); if (popup === pop) popup = null; };
+  m.getContainer().appendChild(wrap);
+  m.on("move", place); place();
+  return pop;
+}
 function onClick(e) {
   const m = map();
   if (!m || (app.getActiveMapTool && app.getActiveMapTool() !== null)) return;     // a GeoLibre tool (Identify, ...) has the click
   const f = roadAt(m, e.point);
-  if (f) showPopup(m, e.point, f.properties); else closePopup();
+  setState(m, selected, {select: false});
+  selected = fid(f);
+  setState(m, selected, {select: true});
+  closePopup();
+  if (f && rsUI && rsUI.inter.popup !== false)
+    popup = makePopup(m, e.lngLat, rsUI.rfields(f.properties, rsUI.inter.popup), {close: true});
 }
-
 function onMove(e) {
   const m = map();
   if (!m) return;
-  const f = roadAt(m, e.point);
-  if (hover) m.setFeatureState(hover, {hover: false});
-  hover = f && f.id != null ? {source: f.source, sourceLayer: "roads", id: f.id} : null;
-  if (hover) m.setFeatureState(hover, {hover: true});
+  const f = roadAt(m, e.point), k = fid(f), key = k ? k.source + "|" + k.id : null;
   m.getCanvas().style.cursor = f ? "pointer" : "";
+  if (key !== tipKey) {                                     // another road, or none: the last one off at once
+    setState(m, hover, {hover: false}); hover = null;
+    if (tip) { tip.remove(); tip = null; }
+    clearTimeout(tipTimer); tipKey = key;
+    if (!k) return;
+    tipTimer = setTimeout(() => {                           // the mouse rested on it: light it up
+      hover = k; setState(m, hover, {hover: true});
+      const t = rsUI && rsUI.inter.tooltip;
+      if (t) tip = makePopup(m, e.lngLat, rsUI.rfields(f.properties, Array.isArray(t) ? t : null), {className: "rs-tip", offset: rsUI.POPUP.tipOffset});
+    }, rsUI ? rsUI.inter.hover_delay_ms : 0);
+  } else if (tip) tip.setLngLat(e.lngLat);                  // lit: its tooltip follows the mouse along the road
 }
 
 async function addStyle(url) {
   const m = map();
   if (!m) throw new Error("roadstyle: GeoLibre has no MapLibre map (the plugin needs the MapLibre renderer)");
   const style = await (await fetch(url)).json();
+  await loadUI(style.metadata && style.metadata["roadstyle:interaction"]);
   const prefix = `rs${added.length}-`;
   await loadSprite(m, style.sprite, prefix);
+  // the style's own images (mapstyle: icons and textures, roadstyle:images), added under their names
+  const images = (style.metadata && style.metadata["roadstyle:images"]) || {};
+  await Promise.all(Object.entries(images).map(([n, src]) => new Promise((done) => {
+    const img = new Image();
+    img.onload = () => { if (!m.hasImage(n)) m.addImage(n, img); done(); };
+    img.onerror = () => { console.warn("roadstyle: the image", n, "did not load"); done(); };
+    img.src = src;
+  })));
   const font = baseFont(m);
   const sourceIds = [], layerIds = [];
   for (const [id, src] of Object.entries(style.sources)) {
@@ -125,20 +179,34 @@ async function addStyle(url) {
   for (const l of style.layers) {
     const layout = {...(l.layout || {})};
     if (layout["text-font"] && font) layout["text-font"] = font;
-    if (typeof layout["icon-image"] === "string") layout["icon-image"] = prefix + layout["icon-image"];
+    if (typeof layout["icon-image"] === "string" && !(layout["icon-image"] in images)) layout["icon-image"] = prefix + layout["icon-image"];
     m.addLayer({...l, id: prefix + l.id, source: prefix + l.source, layout});
     layerIds.push(prefix + l.id);
   }
-  const name = (style.name || "roads") + " (roadstyle)";
+  // one GeoLibre row per group of the style (metadata roadstyle:group: "roads", or a base-map layer's name), in one folder,
+  // so each can be switched on and off; a group starts as the style has it (a layer hidden in the page starts hidden)
+  const groups = new Map();
+  style.layers.forEach((l, i) => {
+    const g = (l.metadata && l.metadata["roadstyle:group"]) || "roads";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(layerIds[i]);
+  });
+  const rowIds = [];
   if (app.registerExternalNativeLayer) {
-    app.registerExternalNativeLayer({
-      id: prefix + "layer", name, type: "vector", nativeLayerIds: layerIds, sourceIds, opacity: 1, style: {}, metadata: {url},
-      paintMode: "plugin",            // roadstyle paints these layers: GeoLibre's style editors do not apply
-      paintBridge: {setVisibility: (v) => layerIds.forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", v ? "visible" : "none"))},
+    [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
+      const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
+      app.registerExternalNativeLayer({
+        id, name: g === "roads" ? (style.name || "roads") + " · roads" : g, type: "vector", nativeLayerIds: ids, sourceIds,
+        opacity: 1, style: {}, metadata: {url, group: g}, visible,
+        paintMode: "plugin",          // roadstyle paints these layers: GeoLibre's style editors do not apply
+        paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))},
+      });
+      rowIds.push(id);
     });
+    if (app.addLayerGroup) app.addLayerGroup((style.name || "roads") + " (roadstyle)", rowIds);
   }
-  if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); m.on("movestart", closePopup); }
-  added.push({url, prefix, layerIds, sourceIds});
+  if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); }   // the popup stays at its road while the map moves, as on the page
+  added.push({url, prefix, layerIds, sourceIds, rowIds});
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
 }
 
@@ -227,12 +295,12 @@ function removeAll() {
   const m = map();
   closePopup();
   for (const a of added.splice(0)) {
-    if (app.unregisterExternalNativeLayer) app.unregisterExternalNativeLayer(a.prefix + "layer");
+    if (app.unregisterExternalNativeLayer) (a.rowIds || []).forEach((id) => app.unregisterExternalNativeLayer(id));
     if (!m) continue;
     a.layerIds.slice().reverse().forEach((id) => m.getLayer(id) && m.removeLayer(id));
     a.sourceIds.forEach((id) => m.getSource(id) && m.removeSource(id));
   }
-  if (m) { m.off("click", onClick); m.off("mousemove", onMove); if (!styled.length) m.off("movestart", closePopup); }
+  if (m) { m.off("click", onClick); m.off("mousemove", onMove); }
 }
 
 const fail = (e) => { console.error(e); alert(String(e.message || e)); };
@@ -280,7 +348,7 @@ async function styleFiles(pick, label) {
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.5.0",
+  version: "0.6.0",
   urlParameterNames: ["roadstyle", "roadstyle_look", "mapstyle_look"],
   activate(host) {
     app = host;
