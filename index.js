@@ -115,18 +115,20 @@ async function addStyle(url) {
 // layer's own MapLibre source; GeoLibre's plain line goes unseen but stays, so Identify still finds the roads.
 const styled = [];           // [{layer, ids}]
 
-async function styleLayer(layerId, lookUrl) {
+// look: a roadstyle look (rs.export_look) or one file of a mapstyle look (mapstyle.look.export_look); fetched from lookUrl if not given
+async function styleLayer(layerId, lookUrl, look = null, label = "roadstyle look") {
   const m = map();
-  const src = "source-" + layerId, own = "layer-" + layerId + "-line";
+  const src = "source-" + layerId;
   if (!m || !m.getSource(src)) throw new Error("roadstyle: this layer has no data source the plugin can read (" + src + ")");
-  const look = await (await fetch(lookUrl)).json();
+  look = look || await (await fetch(lookUrl)).json();
   const feats = (app.getLayerFeatures ? app.getLayerFeatures(layerId) : null);
   const props = ((feats && feats.features) || feats || []).map((f) => f.properties || {});
   const missing = (look.columns || []).filter((c) => !props.some((p) => c in p));
   // the positions the data has (a road without them is at position 0): only their layers are added
   const have = new Set(props.flatMap((p) => [p.casing_level, p.fill_level]).map((v) => (v == null ? 0 : Number(v))));
-  const ids = m.getStyle().layers.map((l) => l.id);
-  const before = ids[ids.indexOf(own) + 1];                         // right above GeoLibre's own line
+  const all = m.getStyle().layers, ids = all.map((l) => l.id);
+  const own = all.filter((l) => l.source === src);                  // GeoLibre's own layers of this data layer
+  const before = ids[ids.indexOf(own[own.length - 1].id) + 1];      // right above them
   const added_ = [];
   for (const l of look.layers) {
     const pos = l.metadata && l.metadata["roadstyle:position"];
@@ -135,29 +137,32 @@ async function styleLayer(layerId, lookUrl) {
     m.addLayer({...l, id, source: src}, before);
     added_.push(id);
   }
-  const own0 = m.getLayer(own) && m.getPaintProperty(own, "line-color");
-  ownColor[layerId] = typeof own0 === "string" ? own0 : "#3388ff";
-  hideOwnLine(layerId);
+  ownColor[layerId] = Object.fromEntries(own.map((l) => [l.type, m.getPaintProperty(l.id, l.type + "-color")])
+    .filter(([, c]) => typeof c === "string"));
+  hideOwn(layerId);
   if (app.registerExternalNativeLayer) {
     app.registerExternalNativeLayer({
-      id: "rslook-" + layerId, name: ((app.listLayers().find((l) => l.id === layerId) || {}).name || layerId) + " · roadstyle look" + (look.name ? " (" + look.name + ")" : ""), type: "vector",
+      id: "rslook-" + layerId, name: ((app.listLayers().find((l) => l.id === layerId) || {}).name || layerId) + " · " + label, type: "vector",
       nativeLayerIds: added_, sourceIds: [], opacity: 1, style: {}, paintMode: "plugin", metadata: {layerId, lookUrl},
       paintBridge: {setVisibility: (v) => added_.forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", v ? "visible" : "none"))},
     });
   }
   styled.push({layer: layerId, ids: added_, lookUrl});
-  if (missing.length) alert("roadstyle: the layer has no column " + missing.join(", ") + ": the look shows what it can (no column " +
-                            "casing_level / fill_level: every road at one drawing position).");
+  if (missing.length) alert("roadstyle: the layer has no column " + missing.join(", ") + ": the look shows what it can" +
+                            (missing.includes("fill_level") ? " (every road at one drawing position)." : "."));
 }
 
 // GeoLibre's own line of the data layer, unseen (a transparent colour), set through GeoLibre's style so that GeoLibre keeps it: it
 // redraws its layers from its own store, and a paint set on the map alone would come back. GeoLibre's layer style has a line colour but
 // no line opacity. The layer stays, so Identify still finds the roads. ``color``: the colour to put back (unstyleAll).
 const ownColor = {};
-function hideOwnLine(layerId, color = "rgba(0,0,0,0)") {
-  const res = app.importLayerStyle ? app.importLayerStyle(layerId, JSON.stringify({version: 8, sources: {}, layers: [
-    {id: "roads", type: "line", source: "roads", paint: {"line-color": color}}]})) : null;
-  console.info("roadstyle: GeoLibre's line of layer", layerId, "->", color, JSON.stringify(res));
+// GeoLibre's own drawing of the layer: transparent under a look, its colours again without it (importLayerStyle, so
+// GeoLibre's layer sync keeps it and Identify still works)
+function hideOwn(layerId, colors = null) {
+  const types = ["fill", "line", "circle"];
+  const res = app.importLayerStyle ? app.importLayerStyle(layerId, JSON.stringify({version: 8, sources: {}, layers: types.map((t) =>
+    ({id: t, type: t, source: "d", paint: {[t + "-color"]: (colors && colors[t]) || "rgba(0,0,0,0)"}}))})) : null;
+  console.info("roadstyle: GeoLibre's own drawing of layer", layerId, "->", colors ? "its colours" : "transparent", JSON.stringify(res));
 }
 
 function pickLayer() {
@@ -174,7 +179,7 @@ function unstyleAll() {
     if (app.unregisterExternalNativeLayer) app.unregisterExternalNativeLayer("rslook-" + s.layer);
     if (!m) continue;
     s.ids.forEach((id) => m.getLayer(id) && m.removeLayer(id));
-    hideOwnLine(s.layer, ownColor[s.layer] || "#3388ff");
+    hideOwn(s.layer, ownColor[s.layer] || {});
   }
 }
 
@@ -195,31 +200,36 @@ const fail = (e) => { console.error(e); alert(String(e.message || e)); };
 // A duckOSM folder (duckosm export-gis --format geoparquet): GeoLibre opens many GeoParquet files from one link
 // (?data=A&data=B), so the plugin makes that link from layers.json and adds roadstyle_look=<look URL>. After the
 // page opens it again, the plugin styles every edges layer with the look.
-const ORDER = {boundary: 0, edges: 2}, MODES = {walking: 0, cycling: 1, driving: 2};
-const defaultLook = () => (app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, "looks/default.json")) || "";
+const ORDER = {boundary: 0, features: 1, edges: 2}, MODES = {walking: 0, cycling: 1, driving: 2};
+const asset = (f) => (app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f)) || "";
+const defaultLook = () => asset("looks/default.json"), defaultMapLook = () => asset("looks/mapstyle.json");
 
-async function openFolder(folder, lookUrl) {
+async function openFolder(folder, lookUrl, mapLookUrl) {
   const base = folder.replace(/layers\.json$/, "").replace(/\/?$/, "/");
   const res = await fetch(base + "layers.json");
   if (!res.ok) throw new Error("roadstyle: no layers.json in " + base + " (HTTP " + res.status + "). Write the folder with: duckosm export-gis --format geoparquet");
-  const files = (await res.json()).layers.filter((f) => f.kind !== "nodes").sort((a, b) =>
-    (ORDER[a.kind] ?? 9) - (ORDER[b.kind] ?? 9) || (MODES[a.mode] ?? 9) - (MODES[b.mode] ?? 9));
+  const mapLook = await (await fetch(mapLookUrl)).json(), tables = mapLook.order;   // the base map's draw order, from mapstyle
+  // not opened: the nodes, and a features table that mapstyle does not draw (place_labels)
+  const files = (await res.json()).layers.filter((f) => f.kind !== "nodes" && (f.kind !== "features" || mapLook.files[f.file.replace(/\.parquet$/, "")])).sort((a, b) =>
+    (ORDER[a.kind] ?? 9) - (ORDER[b.kind] ?? 9) || (MODES[a.mode] ?? 9) - (MODES[b.mode] ?? 9) ||
+    tables.indexOf(a.table) - tables.indexOf(b.table));
   const q = new URLSearchParams();
   files.forEach((f) => q.append("data", new URL(f.file, base).href));
   q.set("roadstyle_look", lookUrl);
+  q.set("mapstyle_look", mapLookUrl);
   location.assign(location.origin + location.pathname + "?" + q.toString());
 }
 
-// Wait for GeoLibre to load the edges files of the link, then style each one.
-async function styleEdges(lookUrl) {
+// Wait for GeoLibre to load the files of the link that pick(name) gives a look, then style each one.
+async function styleFiles(pick, label) {
   const want = new URLSearchParams(location.search).getAll("data")
     .map((u) => decodeURIComponent(new URL(u).pathname.split("/").pop()).replace(/\.(geo)?parquet$/i, ""))
-    .filter((n) => n.startsWith("edges"));
+    .filter((n) => pick(n));
   const t0 = Date.now();
   for (;;) {
     const have = (app.listLayers ? app.listLayers() : []).filter((l) => want.includes(l.name));
     if (have.length === want.length && have.every((l) => map() && map().getSource("source-" + l.id))) {
-      for (const l of have) await styleLayer(l.id, lookUrl);
+      for (const l of have) await styleLayer(l.id, null, pick(l.name), label);
       return;
     }
     if (Date.now() - t0 > 600000) throw new Error("roadstyle: GeoLibre did not load " + want.join(", ") + " in 10 minutes; the look is not applied.");
@@ -230,8 +240,8 @@ async function styleEdges(lookUrl) {
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.3.0",
-  urlParameterNames: ["roadstyle", "roadstyle_look"],
+  version: "0.4.0",
+  urlParameterNames: ["roadstyle", "roadstyle_look", "mapstyle_look"],
   activate(host) {
     app = host;
     if (app.registerToolbarMenu) {
@@ -239,7 +249,7 @@ export const plugin = {
         id: "roadstyle-menu", label: "roadstyle",
         items: [{id: "folder", label: "Open a duckOSM folder…", onSelect: () => {
           const url = prompt("The URL of a duckOSM GeoParquet folder (with layers.json):");
-          if (url) openFolder(url.trim(), defaultLook()).catch(fail);
+          if (url) openFolder(url.trim(), defaultLook(), defaultMapLook()).catch(fail);
         }}, {id: "add", label: "Add a roadstyle layer…", onSelect: () => {
           const url = prompt("The URL of a roadstyle export (style.json):");
           if (url) addStyle(url.trim()).catch(fail);
@@ -254,7 +264,14 @@ export const plugin = {
   async handleUrlParameters(host, params) {
     app = app || host;
     for (const url of params.getAll("roadstyle")) await addStyle(url).catch(fail);
-    for (const url of params.getAll("roadstyle_look")) styleEdges(url).catch(fail);
+    for (const url of params.getAll("roadstyle_look")) {
+      const look = await (await fetch(url)).json();
+      styleFiles((n) => (n.startsWith("edges_") ? look : n === "boundary" ? look.boundary || null : null), "roadstyle look").catch(fail);
+    }
+    for (const url of params.getAll("mapstyle_look")) {
+      const look = await (await fetch(url)).json();
+      styleFiles((n) => look.files[n] || null, look.name).catch(fail);
+    }
   },
   deactivate() {
     removeAll();
