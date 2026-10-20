@@ -407,7 +407,16 @@ function closeDatabases() {
 // (?data=A&data=B), so the plugin makes that link from layers.json and adds roadstyle_look=<look URL>. After the
 // page opens it again, the plugin styles every edges layer with the look.
 const ORDER = {boundary: 0, features: 1, edges: 2}, MODES = {walking: 0, cycling: 1, driving: 2};
-const asset = (f) => (app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f)) || "";
+// the plugin's own files (looks, duckosm.js, popup.css / popup.js): by their URL when GeoLibre gives one (a plugin installed by its
+// manifest URL); a plugin installed from a .zip has none, so the zip's index.js carries them (write_plugin_zip fills ASSETS)
+const ASSETS = /*__ASSETS__*/null;
+const TYPES = {js: "text/javascript", css: "text/css", json: "application/json"};
+function asset(f) {
+  const url = app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f);
+  if (url) return url;
+  if (ASSETS && f in ASSETS) return URL.createObjectURL(new Blob([ASSETS[f]], {type: TYPES[f.split(".").pop()]}));
+  throw new Error("roadstyle: the plugin has no file " + f + " (install it by its manifest URL, or from the .zip that write_plugin_zip makes)");
+}
 const defaultLook = () => asset("looks/default.json"), defaultMapLook = () => asset("looks/mapstyle.json");
 
 async function openFolder(folder, lookUrl, mapLookUrl) {
@@ -446,7 +455,7 @@ async function styleFiles(pick, label) {
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.8.0",
+  version: "0.9.0",
   urlParameterNames: ["roadstyle", "roadstyle_look", "mapstyle_look"],
   activate(host) {
     app = host;
