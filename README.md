@@ -9,6 +9,9 @@ own base map, with roadstyle's look and the roads' data. One plain ES module, no
   the default is `looks/default.json`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or
   GeoParquet layer. GeoLibre's own line of the layer becomes transparent; Identify still shows the data.
 - **Not in the menu?** Plugins › Installed › roadstyle makes the plugin active.
+- **After a change to the plugin:** GeoLibre trusts a plugin by the hash of its files. When the files change, it does not load
+  the plugin (the console says "changed since you last trusted it"). Remove the manifest URL in Manage Plugins › Settings,
+  add it again and accept the review. Increase `version` in `plugin.json` with each change.
 - **What it does:** adds the style's sources and layers to GeoLibre's map, registers them as one row of the Layers panel
   (`registerExternalNativeLayer`), shows a road's data on click (not while a GeoLibre tool such as Identify is on), and
   highlights the road under the cursor. The names take a font of GeoLibre's base map, because a map has one glyph source.
