@@ -17,6 +17,9 @@ own base map, with roadstyle's look and the roads' data. One plain ES module, no
 - **After a change to the plugin:** GeoLibre trusts a plugin by the hash of its files. When the files change, it does not load
   the plugin (the console says "changed since you last trusted it"). Remove the manifest URL in Manage Plugins › Settings,
   add it again and accept the review. Increase `version` in `plugin.json` with each change.
+- **Hover and popup of a look:** each look file has a `hover` layer and the `popup` columns, made from the config files (roadstyle's
+  selection colour; roadstyle's default road fields; mapstyle's `layers.yaml` `popup`). The plugin only sets which feature the
+  hover layer shows and fills the popup, in MapLibre's own popup look. A GeoLibre tool (Identify) has the click first.
 - **What it does:** adds the style's sources and layers to GeoLibre's map, registers them as one row of the Layers panel
   (`registerExternalNativeLayer`), shows a road's data on click (not while a GeoLibre tool such as Identify is on), and
   highlights the road under the cursor. The names take a font of GeoLibre's base map, because a map has one glyph source.

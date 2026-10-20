@@ -36,22 +36,54 @@ async function loadSprite(m, url, prefix) {
   }
 }
 
+// the look's feature under the cursor: [styled entry, feature] of the top one, or null
+function lookAt(m, point) {
+  const ids = styled.flatMap((s) => s.ids).filter((id) => m.getLayer(id));
+  const f = ids.length ? m.queryRenderedFeatures(point, {layers: ids})[0] : null;
+  const s = f && styled.find((x) => x.ids.includes(f.layer.id));
+  return s ? [s, f] : null;
+}
+let lookHover = null;
+function onLookMove(e) {
+  const m = map();
+  if (!m) return;
+  const hit = lookAt(m, e.point);
+  const key = hit && hit[0].hover ? hit[0].layer + "|" + hit[1].properties[hit[0].hover.id] : null;
+  if (key === lookHover) return;
+  lookHover = key;
+  for (const s of styled) {
+    const v = hit && hit[0] === s && s.hover ? String(hit[1].properties[s.hover.id]) : "\u0000";
+    s.hoverIds.forEach((id) => { const f = m.getFilter(id); f[f.length - 1] = ["==", ["to-string", ["get", s.hover.id]], v]; m.setFilter(id, f); });
+  }
+  if (!added.length) m.getCanvas().style.cursor = hit && hit[0].popup ? "pointer" : "";
+}
+function onLookClick(e) {
+  const m = map();
+  if (!m || (app.getActiveMapTool && app.getActiveMapTool() !== null)) return;     // a GeoLibre tool (Identify, ...) has the click
+  if (added.length && roadAt(m, e.point)) return;                                  // a roadstyle export's road has its own popup
+  const hit = lookAt(m, e.point);
+  if (!hit || !hit[0].popup) { if (!added.length) closePopup(); return; }
+  const pp = hit[0].popup, p = hit[1].properties, no = ["", "nan", "none", "null", "no", "false", "0"];
+  const shown = (k) => p[k] != null && !["", "nan", "none", "null"].includes(String(p[k]).toLowerCase()) &&
+    !((pp.only_true || []).includes(k) && no.includes(String(p[k]).toLowerCase()));
+  showPopup(m, e.point, Object.fromEntries(pp.columns.filter(shown).map((k) => [k, p[k]])), shown(pp.title) ? p[pp.title] : null);
+}
 function closePopup() {
   if (popup) popup.remove();
   popup = null;
 }
 
-function showPopup(m, point, props) {
+// the popup in MapLibre's own popup look (its CSS classes): the plugin holds no style values
+function showPopup(m, point, props, title = null) {
   closePopup();
-  const rows = Object.entries(props).filter(([k]) => !k.startsWith("__")).map(([k, v]) =>
-    `<tr><th style="text-align:left;padding:1px 8px 1px 0;font-weight:600">${k}</th><td>${v}</td></tr>`).join("");
+  const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const rows = Object.entries(props).filter(([k]) => !k.startsWith("__")).map(([k, v]) => `<b>${esc(k)}</b>: ${esc(v)}`);
   popup = document.createElement("div");
-  popup.style.cssText = "position:absolute;z-index:5;background:#fff;color:#222;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.3);" +
-    "padding:8px 10px;font:12px/1.4 system-ui,sans-serif;max-height:320px;overflow:auto;max-width:360px";
-  popup.style.left = point.x + 12 + "px";
-  popup.style.top = point.y + 12 + "px";
-  popup.innerHTML = `<div style="text-align:right;cursor:pointer" title="Close">✕</div><table>${rows}</table>`;
-  popup.firstChild.onclick = closePopup;
+  popup.className = "maplibregl-popup maplibregl-popup-anchor-top-left";
+  popup.style.cssText = `position:absolute;left:0;top:0;transform:translate(${point.x}px,${point.y}px)`;
+  popup.innerHTML = `<div class="maplibregl-popup-content"><button class="maplibregl-popup-close-button" type="button" aria-label="Close">×</button>` +
+    (title != null ? `<b>${esc(title)}</b><br>` : "") + rows.join("<br>") + "</div>";
+  popup.querySelector("button").onclick = closePopup;
   m.getContainer().appendChild(popup);
 }
 
@@ -137,17 +169,24 @@ async function styleLayer(layerId, lookUrl, look = null, label = "roadstyle look
     m.addLayer({...l, id, source: src}, before);
     added_.push(id);
   }
+  const NONE = "\u0000";                                             // matches no feature: nothing is hovered
+  const hoverIds = ((look.hover && look.hover.layers) || []).map((l) => {
+    const id = "rslook-" + layerId + "-" + l.id;
+    m.addLayer({...l, id, source: src, filter: ["all", ...(l.filter ? [l.filter] : []), ["==", ["to-string", ["get", look.hover.id]], NONE]]}, before);
+    return id;
+  });
   ownColor[layerId] = Object.fromEntries(own.map((l) => [l.type, m.getPaintProperty(l.id, l.type + "-color")])
     .filter(([, c]) => typeof c === "string"));
   hideOwn(layerId);
   if (app.registerExternalNativeLayer) {
     app.registerExternalNativeLayer({
       id: "rslook-" + layerId, name: ((app.listLayers().find((l) => l.id === layerId) || {}).name || layerId) + " · " + label, type: "vector",
-      nativeLayerIds: added_, sourceIds: [], opacity: 1, style: {}, paintMode: "plugin", metadata: {layerId, lookUrl},
-      paintBridge: {setVisibility: (v) => added_.forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", v ? "visible" : "none"))},
+      nativeLayerIds: added_.concat(hoverIds), sourceIds: [], opacity: 1, style: {}, paintMode: "plugin", metadata: {layerId, lookUrl},
+      paintBridge: {setVisibility: (v) => added_.concat(hoverIds).forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", v ? "visible" : "none"))},
     });
   }
-  styled.push({layer: layerId, ids: added_, lookUrl});
+  styled.push({layer: layerId, ids: added_, hoverIds, hover: look.hover, popup: look.popup, lookUrl});
+  if (styled.length === 1) { m.on("mousemove", onLookMove); m.on("click", onLookClick); m.on("movestart", closePopup); }
   if (missing.length) alert("roadstyle: the layer has no column " + missing.join(", ") + ": the look shows what it can" +
                             (missing.includes("fill_level") ? " (every road at one drawing position)." : "."));
 }
@@ -178,9 +217,10 @@ function unstyleAll() {
   for (const s of styled.splice(0)) {
     if (app.unregisterExternalNativeLayer) app.unregisterExternalNativeLayer("rslook-" + s.layer);
     if (!m) continue;
-    s.ids.forEach((id) => m.getLayer(id) && m.removeLayer(id));
+    s.ids.concat(s.hoverIds || []).forEach((id) => m.getLayer(id) && m.removeLayer(id));
     hideOwn(s.layer, ownColor[s.layer] || {});
   }
+  if (m) { m.off("mousemove", onLookMove); m.off("click", onLookClick); if (!added.length) m.off("movestart", closePopup); }
 }
 
 function removeAll() {
@@ -192,7 +232,7 @@ function removeAll() {
     a.layerIds.slice().reverse().forEach((id) => m.getLayer(id) && m.removeLayer(id));
     a.sourceIds.forEach((id) => m.getSource(id) && m.removeSource(id));
   }
-  if (m) { m.off("click", onClick); m.off("mousemove", onMove); m.off("movestart", closePopup); }
+  if (m) { m.off("click", onClick); m.off("mousemove", onMove); if (!styled.length) m.off("movestart", closePopup); }
 }
 
 const fail = (e) => { console.error(e); alert(String(e.message || e)); };
@@ -240,7 +280,7 @@ async function styleFiles(pick, label) {
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.4.0",
+  version: "0.5.0",
   urlParameterNames: ["roadstyle", "roadstyle_look", "mapstyle_look"],
   activate(host) {
     app = host;
