@@ -20,7 +20,9 @@ function duck() {
   return engine;
 }
 
-const rowsOf = (table) => table.toArray().map((r) => r.toJSON());
+// a BIGINT comes as a BigInt (1n): a number when it fits one exactly, else text (an id past 2**53)
+const plain = (v) => (typeof v === "bigint" ? (Number.isSafeInteger(Number(v)) ? Number(v) : String(v)) : v);
+const rowsOf = (table) => table.toArray().map((r) => Object.fromEntries(Object.entries(r.toJSON()).map(([k, v]) => [k, plain(v)])));
 const fc = (rows) => ({type: "FeatureCollection", features: rows.map(({g, ...p}) => ({type: "Feature", properties: p, geometry: JSON.parse(g)}))});
 
 export async function readDuckOSM(file, onStep = () => {}) {
