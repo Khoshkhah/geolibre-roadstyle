@@ -7,7 +7,7 @@ own base map, with roadstyle's look and the roads' data. One plain ES module, no
 - **Open an export:** the menu **roadstyle** › Add a roadstyle layer, or `?roadstyle=<URL of style.json>` in the GeoLibre link.
 - **Open a duckOSM folder:** the menu **roadstyle** › Open a duckOSM folder takes the URL of a folder from
   `duckosm export-gis --format geoparquet` (it has `layers.json`). The plugin opens GeoLibre again with every file of the
-  folder as a data layer (`?data=…&data=…&roadstyle_look=<look URL>`) and puts the look on each edges layer.
+  folder except the nodes as a data layer (`?data=…&data=…&roadstyle_look=<look URL>`) and puts the look on each edges layer.
 - **Style a data layer:** the menu **roadstyle** › Style a layer with roadstyle puts a roadstyle look (`rs.export_look`;
   the default is `looks/default.json`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or
   GeoParquet layer. GeoLibre's own line of the layer becomes transparent; Identify still shows the data.

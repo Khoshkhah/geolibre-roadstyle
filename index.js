@@ -195,14 +195,14 @@ const fail = (e) => { console.error(e); alert(String(e.message || e)); };
 // A duckOSM folder (duckosm export-gis --format geoparquet): GeoLibre opens many GeoParquet files from one link
 // (?data=A&data=B), so the plugin makes that link from layers.json and adds roadstyle_look=<look URL>. After the
 // page opens it again, the plugin styles every edges layer with the look.
-const ORDER = {boundary: 0, nodes: 1, edges: 2}, MODES = {walking: 0, cycling: 1, driving: 2};
+const ORDER = {boundary: 0, edges: 2}, MODES = {walking: 0, cycling: 1, driving: 2};
 const defaultLook = () => (app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, "looks/default.json")) || "";
 
 async function openFolder(folder, lookUrl) {
   const base = folder.replace(/layers\.json$/, "").replace(/\/?$/, "/");
   const res = await fetch(base + "layers.json");
   if (!res.ok) throw new Error("roadstyle: no layers.json in " + base + " (HTTP " + res.status + "). Write the folder with: duckosm export-gis --format geoparquet");
-  const files = (await res.json()).layers.slice().sort((a, b) =>
+  const files = (await res.json()).layers.filter((f) => f.kind !== "nodes").sort((a, b) =>
     (ORDER[a.kind] ?? 9) - (ORDER[b.kind] ?? 9) || (MODES[a.mode] ?? 9) - (MODES[b.mode] ?? 9));
   const q = new URLSearchParams();
   files.forEach((f) => q.append("data", new URL(f.file, base).href));
