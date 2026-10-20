@@ -43,19 +43,24 @@ function lookAt(m, point) {
   const s = f && styled.find((x) => x.ids.includes(f.layer.id));
   return s ? [s, f] : null;
 }
-let lookHover = null;
+let lookHover = null, lookTimer = 0;
 function onLookMove(e) {
   const m = map();
   if (!m) return;
   const hit = lookAt(m, e.point);
-  const key = hit && hit[0].hover ? hit[0].layer + "|" + hit[1].properties[hit[0].hover.id] : null;
+  const key = hit && hit[0].hover ? styled.indexOf(hit[0]) + "|" + hit[1].properties[hit[0].hover.id] : null;
+  if (!added.length) m.getCanvas().style.cursor = hit && hit[0].popup ? "pointer" : "";
   if (key === lookHover) return;
   lookHover = key;
-  for (const s of styled) {
-    const v = hit && hit[0] === s && s.hover ? String(hit[1].properties[s.hover.id]) : "\u0000";
-    s.hoverIds.forEach((id) => { const f = m.getFilter(id); f[f.length - 1] = ["==", ["to-string", ["get", s.hover.id]], v]; m.setFilter(id, f); });
-  }
-  if (!added.length) m.getCanvas().style.cursor = hit && hit[0].popup ? "pointer" : "";
+  const light = (on) => {                    // the feature under the mouse in its look's hover layers, every other off
+    for (const s of styled) {
+      const v = on && hit[0] === s && s.hover ? String(hit[1].properties[s.hover.id]) : "\u0000";
+      s.hoverIds.forEach((id) => { const f = m.getFilter(id); f[f.length - 1] = ["==", ["to-string", ["get", s.hover.id]], v]; m.setFilter(id, f); });
+    }
+  };
+  light(false);                              // the last one off at once
+  clearTimeout(lookTimer);
+  if (hit) lookTimer = setTimeout(() => { if (lookHover === key) light(true); }, rsUI ? rsUI.inter.hover_delay_ms : 0);   // the page's rest
 }
 function onLookClick(e) {
   const m = map();
@@ -64,6 +69,11 @@ function onLookClick(e) {
   const hit = lookAt(m, e.point);
   if (!hit || !hit[0].popup) { if (!added.length) closePopup(); return; }
   const pp = hit[0].popup, p = hit[1].properties, no = ["", "nan", "none", "null", "no", "false", "0"];
+  if (rsUI) {                                 // the page's popup (popup.js / popup.css), at the click
+    closePopup();
+    popup = makePopup(m, e.lngLat, rsUI.rfields(p, pp.columns), {close: true});
+    return;
+  }
   const shown = (k) => p[k] != null && !["", "nan", "none", "null"].includes(String(p[k]).toLowerCase()) &&
     !((pp.only_true || []).includes(k) && no.includes(String(p[k]).toLowerCase()));
   showPopup(m, e.point, Object.fromEntries(pp.columns.filter(shown).map((k) => [k, p[k]])), shown(pp.title) ? p[pp.title] : null);
@@ -283,6 +293,7 @@ function pickLayer() {
 function unstyleAll() {
   const m = map();
   for (const s of styled.splice(0)) {
+    if (s.own === false) continue;                  // a database's layers: closeDatabases removes them
     if (app.unregisterExternalNativeLayer) app.unregisterExternalNativeLayer("rslook-" + s.layer);
     if (!m) continue;
     s.ids.concat(s.hoverIds || []).forEach((id) => m.getLayer(id) && m.removeLayer(id));
@@ -304,6 +315,93 @@ function removeAll() {
 }
 
 const fail = (e) => { console.error(e); alert(String(e.message || e)); };
+
+// A duckOSM database from your disk, read in the browser (duckosm.js, DuckDB-wasm): no server and no export. The roads get
+// roadstyle's look (looks/default.json, with their casing cut into heads at the file's drawing positions), the base map
+// mapstyle's (looks/mapstyle.json), the boundary roadstyle's outline: one GeoLibre row per layer, in one folder.
+const opened = [];                   // [{sources, layers, rows}]
+function openDatabase() {
+  const input = Object.assign(document.createElement("input"), {type: "file", accept: ".duckdb"});
+  input.onchange = () => (async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const say = (step) => console.info("roadstyle:", file.name, "-", step);
+    const [roadLook, mapLook] = await Promise.all([defaultLook(), defaultMapLook()].map(async (u) => (await fetch(u)).json()));
+    await loadUI({css: asset("popup.css"), js: asset("popup.js"), popup: roadLook.popup.columns, tooltip: false, hover_delay_ms: roadLook.hover_delay_ms});
+    // GeoLibre runs this file from a blob, so a relative import does not resolve: duckosm.js by its asset URL
+    const {readDuckOSM, casingPieces} = await import(asset("duckosm.js"));
+    const data = await readDuckOSM(file, say);
+    say("drawing");
+    drawDuckOSM(data, file.name, roadLook, mapLook, casingPieces);
+    if (!data.levels) alert("roadstyle: " + file.name + " has no drawing order (visualization.edge_levels), so every road is drawn at one " +
+                            "position: bridges and tunnels are not over or under other roads. Store it in the file with: duckosm levels " + file.name);
+  })().catch(fail);
+  input.click();
+}
+
+function drawDuckOSM(data, name, roadLook, mapLook, casingPieces) {
+  const m = map(), k = `rd${opened.length}-`;
+  const sources = [], layers = [], groups = new Map(), NONE = "\u0000";
+  const src = (id, d) => { m.addSource(k + id, {type: "geojson", data: d}); sources.push(k + id); return k + id; };
+  const add = (group, spec, source) => {
+    const id = k + spec.id;
+    m.addLayer({...spec, id, source});
+    layers.push(id);
+    if (group) { if (!groups.has(group)) groups.set(group, []); groups.get(group).push(id); }
+    return id;
+  };
+  // a look's hover layers: they show only the feature under the mouse (onLookMove sets the id the last filter keeps)
+  const hoverOf = (look, source, tag) => ((look.hover && look.hover.layers) || []).map((l) => add(null,
+    {...l, id: `${tag}-hover-${l.id}`, filter: ["all", ...(l.filter ? [l.filter] : []), ["==", ["to-string", ["get", look.hover.id]], NONE]]}, source));
+  const entries = [];
+  for (const t of mapLook.order) {                   // the base map, in mapstyle's draw order
+    const look = mapLook.files["features_" + t], d = data.features[t];
+    if (!look || !d) continue;
+    const s = src("f-" + t, d);
+    const ids = look.layers.map((l) => add(l.id.replace(/-(outline|pattern)$/, ""), {...l, id: `f-${t}-${l.id}`}, s));
+    entries.push({ids, hoverIds: hoverOf(look, s, "f-" + t), hover: look.hover, popup: look.popup});
+  }
+  if (data.boundary && roadLook.boundary)
+    roadLook.boundary.layers.forEach((l) => add("boundary", {...l, id: "b-" + l.id}, src("b", data.boundary)));
+  const rs = src("roads", data.roads), pieces = casingPieces(data.roads, roadLook.head_m), ps = src("pieces", pieces);
+  const have = new Set([...pieces.features.map((f) => f.properties.casing_level), ...data.roads.features.map((f) => f.properties.fill_level ?? 0)]);
+  const roadIds = [];
+  for (const l of roadLook.layers) {
+    const pos = l.metadata && l.metadata["roadstyle:position"];
+    if (pos != null && !have.has(pos)) continue;
+    roadIds.push(add("roads", {...l, id: "r-" + l.id}, l.id.startsWith("casing") ? ps : rs));
+  }
+  entries.push({ids: roadIds, hoverIds: hoverOf(roadLook, rs, "r"), hover: roadLook.hover, popup: roadLook.popup});
+  const rows = [];
+  if (app.registerExternalNativeLayer) {
+    [...groups].forEach(([g, ids], i) => {           // in draw order: GeoLibre lists the last one on top
+      const id = k + "row" + i;
+      app.registerExternalNativeLayer({
+        id, name: g === "roads" ? name + " · roads" : g, type: "vector", nativeLayerIds: ids, sourceIds: sources, opacity: 1, style: {},
+        metadata: {file: name, group: g}, paintMode: "plugin",
+        paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))},
+      });
+      rows.push(id);
+    });
+    if (app.addLayerGroup) app.addLayerGroup(name + " (roadstyle)", rows);
+  }
+  for (const e of entries) styled.push({layer: k, own: false, ...e});
+  if (styled.length === entries.length) { m.on("mousemove", onLookMove); m.on("click", onLookClick); }
+  opened.push({sources, layers, rows});
+  let w = 180, s_ = 90, e_ = -180, n = -90;          // fit the map to the roads
+  for (const f of data.roads.features) for (const [x, y] of f.geometry.coordinates) { w = Math.min(w, x); e_ = Math.max(e_, x); s_ = Math.min(s_, y); n = Math.max(n, y); }
+  if (w <= e_) m.fitBounds([[w, s_], [e_, n]], {padding: 20, duration: 0});
+}
+
+function closeDatabases() {
+  const m = map();
+  for (const o of opened.splice(0)) {
+    if (app.unregisterExternalNativeLayer) o.rows.forEach((id) => app.unregisterExternalNativeLayer(id));
+    if (!m) continue;
+    o.layers.slice().reverse().forEach((id) => m.getLayer(id) && m.removeLayer(id));
+    o.sources.forEach((id) => m.getSource(id) && m.removeSource(id));
+  }
+}
 
 // A duckOSM folder (duckosm export-gis --format geoparquet): GeoLibre opens many GeoParquet files from one link
 // (?data=A&data=B), so the plugin makes that link from layers.json and adds roadstyle_look=<look URL>. After the
@@ -348,14 +446,16 @@ async function styleFiles(pick, label) {
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.6.0",
+  version: "0.8.0",
   urlParameterNames: ["roadstyle", "roadstyle_look", "mapstyle_look"],
   activate(host) {
     app = host;
     if (app.registerToolbarMenu) {
       disposeMenu = app.registerToolbarMenu({
         id: "roadstyle-menu", label: "roadstyle",
-        items: [{id: "folder", label: "Open a duckOSM folder…", onSelect: () => {
+        items: [{id: "db", label: "Open a duckOSM database…", onSelect: () => {
+          try { openDatabase(); } catch (e) { fail(e); }
+        }}, {id: "folder", label: "Open a duckOSM folder…", onSelect: () => {
           const url = prompt("The URL of a duckOSM GeoParquet folder (with layers.json):");
           if (url) openFolder(url.trim(), defaultLook(), defaultMapLook()).catch(fail);
         }}, {id: "add", label: "Add a roadstyle layer…", onSelect: () => {
@@ -384,6 +484,7 @@ export const plugin = {
   deactivate() {
     removeAll();
     unstyleAll();
+    closeDatabases();
     if (disposeMenu) disposeMenu();
     disposeMenu = null;
   },

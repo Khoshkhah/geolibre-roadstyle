@@ -5,6 +5,13 @@ own base map, with roadstyle's look and the roads' data. One plain ES module, no
 
 - **Install:** GeoLibre › Settings › Manage Plugins › Settings › Manifest URLs: the URL of this folder's `plugin.json`, then Add.
 - **Open an export:** the menu **roadstyle** › Add a roadstyle layer, or `?roadstyle=<URL of style.json>` in the GeoLibre link.
+- **Open a duckOSM database:** the menu **roadstyle** › Open a duckOSM database asks for a `.duckdb` file on your disk. The
+  plugin reads it in the browser with DuckDB-wasm (`duckosm.js`; no server, no export), and draws the roads of every mode
+  with roadstyle's look (`looks/default.json`; each casing cut into its heads at the file's drawing positions), the
+  `features.*` base map with mapstyle's look (`looks/mapstyle.json`) and the boundary: one row per layer, in one folder.
+  A file with no `visualization.edge_levels` draws every road at one position, and the plugin says so (`duckosm levels`).
+  Make the plugin's files again after a change of the config: `python -c "import roadstyle.export as e; e.write_plugin_files('geolibre-plugin')"`
+  and mapstyle's `export_look('geolibre-plugin/looks/mapstyle.json')`.
 - **Open a duckOSM folder:** the menu **roadstyle** › Open a duckOSM folder takes the URL of a folder from
   `duckosm export-gis --format geoparquet` (it has `layers.json`). The plugin opens GeoLibre again with every file of the
   folder as a data layer (`?data=…&data=…&roadstyle_look=…&mapstyle_look=…`), but not the nodes and not a features table
