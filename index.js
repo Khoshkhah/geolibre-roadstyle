@@ -140,7 +140,7 @@ async function styleLayer(layerId, lookUrl) {
   hideOwnLine(layerId);
   if (app.registerExternalNativeLayer) {
     app.registerExternalNativeLayer({
-      id: "rslook-" + layerId, name: (look.name ? "roadstyle look (" + look.name + ")" : "roadstyle look"), type: "vector",
+      id: "rslook-" + layerId, name: ((app.listLayers().find((l) => l.id === layerId) || {}).name || layerId) + " · roadstyle look" + (look.name ? " (" + look.name + ")" : ""), type: "vector",
       nativeLayerIds: added_, sourceIds: [], opacity: 1, style: {}, paintMode: "plugin", metadata: {layerId, lookUrl},
       paintBridge: {setVisibility: (v) => added_.forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", v ? "visible" : "none"))},
     });
@@ -192,23 +192,60 @@ function removeAll() {
 
 const fail = (e) => { console.error(e); alert(String(e.message || e)); };
 
+// A duckOSM folder (duckosm export-gis --format geoparquet): GeoLibre opens many GeoParquet files from one link
+// (?data=A&data=B), so the plugin makes that link from layers.json and adds roadstyle_look=<look URL>. After the
+// page opens it again, the plugin styles every edges layer with the look.
+const ORDER = {boundary: 0, nodes: 1, edges: 2}, MODES = {walking: 0, cycling: 1, driving: 2};
+const defaultLook = () => (app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, "looks/default.json")) || "";
+
+async function openFolder(folder, lookUrl) {
+  const base = folder.replace(/layers\.json$/, "").replace(/\/?$/, "/");
+  const res = await fetch(base + "layers.json");
+  if (!res.ok) throw new Error("roadstyle: no layers.json in " + base + " (HTTP " + res.status + "). Write the folder with: duckosm export-gis --format geoparquet");
+  const files = (await res.json()).layers.slice().sort((a, b) =>
+    (ORDER[a.kind] ?? 9) - (ORDER[b.kind] ?? 9) || (MODES[a.mode] ?? 9) - (MODES[b.mode] ?? 9));
+  const q = new URLSearchParams();
+  files.forEach((f) => q.append("data", new URL(f.file, base).href));
+  q.set("roadstyle_look", lookUrl);
+  location.assign(location.origin + location.pathname + "?" + q.toString());
+}
+
+// Wait for GeoLibre to load the edges files of the link, then style each one.
+async function styleEdges(lookUrl) {
+  const want = new URLSearchParams(location.search).getAll("data")
+    .map((u) => decodeURIComponent(new URL(u).pathname.split("/").pop()).replace(/\.(geo)?parquet$/i, ""))
+    .filter((n) => n.startsWith("edges"));
+  const t0 = Date.now();
+  for (;;) {
+    const have = (app.listLayers ? app.listLayers() : []).filter((l) => want.includes(l.name));
+    if (have.length === want.length && have.every((l) => map() && map().getSource("source-" + l.id))) {
+      for (const l of have) await styleLayer(l.id, lookUrl);
+      return;
+    }
+    if (Date.now() - t0 > 600000) throw new Error("roadstyle: GeoLibre did not load " + want.join(", ") + " in 10 minutes; the look is not applied.");
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.1.0",
-  urlParameterNames: ["roadstyle"],
+  version: "0.3.0",
+  urlParameterNames: ["roadstyle", "roadstyle_look"],
   activate(host) {
     app = host;
     if (app.registerToolbarMenu) {
       disposeMenu = app.registerToolbarMenu({
         id: "roadstyle-menu", label: "roadstyle",
-        items: [{id: "add", label: "Add a roadstyle layer…", onSelect: () => {
+        items: [{id: "folder", label: "Open a duckOSM folder…", onSelect: () => {
+          const url = prompt("The URL of a duckOSM GeoParquet folder (with layers.json):");
+          if (url) openFolder(url.trim(), defaultLook()).catch(fail);
+        }}, {id: "add", label: "Add a roadstyle layer…", onSelect: () => {
           const url = prompt("The URL of a roadstyle export (style.json):");
           if (url) addStyle(url.trim()).catch(fail);
         }}, {id: "look", label: "Style a layer with roadstyle…", onSelect: () => {
           const layer = pickLayer(); if (!layer) return;
-          const def = (app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, "looks/default.json")) || "";
-          const url = prompt("The URL of a roadstyle look (rs.export_look):", def);
+          const url = prompt("The URL of a roadstyle look (rs.export_look):", defaultLook());
           if (url) styleLayer(layer, url.trim()).catch(fail);
         }}],
       });
@@ -217,6 +254,7 @@ export const plugin = {
   async handleUrlParameters(host, params) {
     app = app || host;
     for (const url of params.getAll("roadstyle")) await addStyle(url).catch(fail);
+    for (const url of params.getAll("roadstyle_look")) styleEdges(url).catch(fail);
   },
   deactivate() {
     removeAll();
