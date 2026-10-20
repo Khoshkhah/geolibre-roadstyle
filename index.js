@@ -100,7 +100,7 @@ function showPopup(m, point, props, title = null) {
 // the road under the cursor: the roads tile layer of an added export (in simple mode its fill layer is unseen but kept for this)
 function roadAt(m, point) {
   const ids = added.flatMap((a) => a.layerIds).filter((id) => m.getLayer(id) && m.getLayer(id).type === "line");
-  return m.queryRenderedFeatures(point, {layers: ids}).find((f) => f.sourceLayer === "roads") || null;
+  return m.queryRenderedFeatures(point, {layers: ids}).find((f) => f.sourceLayer === "roads" || (!f.sourceLayer && /roads$/.test(f.source))) || null;
 }
 
 // The page's road popup and hover (its popup.css / popup.js and its settings, style metadata roadstyle:interaction): the click
@@ -110,6 +110,7 @@ let rsUI = null;                     // {inter, rfields, POPUP}
 let selected = null, tip = null, tipTimer = 0, tipKey = null;
 async function loadUI(inter) {
   if (rsUI || !inter) return;
+  inter = {css: asset("popup.css"), js: asset("popup.js"), ...inter};
   if (!document.querySelector('link[data-roadstyle="popup"]')) {
     const link = Object.assign(document.createElement("link"), {rel: "stylesheet", href: inter.css});
     link.dataset.roadstyle = "popup";
@@ -118,7 +119,7 @@ async function loadUI(inter) {
   const mod = await import(inter.js);
   rsUI = {inter, rfields: mod._rfields, POPUP: mod.POPUP};
 }
-function fid(f) { return f && f.id != null ? {source: f.source, sourceLayer: "roads", id: f.id} : null; }
+function fid(f) { return f && f.id != null ? {source: f.source, ...(f.sourceLayer ? {sourceLayer: f.sourceLayer} : {}), id: f.id} : null; }
 function setState(m, k, st) { if (k) m.setFeatureState(k, st); }
 // a popup in MapLibre's own markup (the page's popup.css styles it under .rs-plugin), kept at its place on the map
 function makePopup(m, lngLat, html, opts) {
@@ -165,21 +166,28 @@ function onMove(e) {
   } else if (tip) tip.setLngLat(e.lngLat);                  // lit: its tooltip follows the mouse along the road
 }
 
+async function addImages(m, images) {   // {name: data URL, or {url, sdf, pixelRatio}}
+  await Promise.all(Object.entries(images || {}).map(([n, v]) => new Promise((done) => {
+    const o = typeof v === "string" ? {url: v} : v, img = new Image();
+    img.onload = () => { if (!m.hasImage(n)) m.addImage(n, img, {sdf: !!o.sdf, pixelRatio: o.pixelRatio || 1}); done(); };
+    img.onerror = () => { console.warn("roadstyle: the image", n, "did not load"); done(); };
+    img.src = o.url;
+  })));
+}
+
 async function addStyle(url) {
+  return addStyleObject(await (await fetch(url)).json(), url);
+}
+// a roadstyle style (export_style's style.json, or export_inline's style with the data inside) as GeoLibre rows
+async function addStyleObject(style, url) {
   const m = map();
   if (!m) throw new Error("roadstyle: GeoLibre has no MapLibre map (the plugin needs the MapLibre renderer)");
-  const style = await (await fetch(url)).json();
   await loadUI(style.metadata && style.metadata["roadstyle:interaction"]);
   const prefix = `rs${added.length}-`;
-  await loadSprite(m, style.sprite, prefix);
-  // the style's own images (mapstyle: icons and textures, roadstyle:images), added under their names
+  if (style.sprite) await loadSprite(m, style.sprite, prefix);
+  // the style's own images (roadstyle's arrow, mapstyle's icons and textures: roadstyle:images), added under their names
   const images = (style.metadata && style.metadata["roadstyle:images"]) || {};
-  await Promise.all(Object.entries(images).map(([n, src]) => new Promise((done) => {
-    const img = new Image();
-    img.onload = () => { if (!m.hasImage(n)) m.addImage(n, img); done(); };
-    img.onerror = () => { console.warn("roadstyle: the image", n, "did not load"); done(); };
-    img.src = src;
-  })));
+  await addImages(m, images);
   const font = baseFont(m);
   const sourceIds = [], layerIds = [];
   for (const [id, src] of Object.entries(style.sources)) {
@@ -201,7 +209,7 @@ async function addStyle(url) {
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(layerIds[i]);
   });
-  const rowIds = [];
+  const rowIds = [], featureRows = [];
   if (app.registerExternalNativeLayer) {
     [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
       const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
@@ -211,12 +219,18 @@ async function addStyle(url) {
         paintMode: "plugin",          // roadstyle paints these layers: GeoLibre's style editors do not apply
         paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))},
       });
-      rowIds.push(id);
+      (g === "roads" ? rowIds : featureRows).push(id);
     });
-    if (app.addLayerGroup) app.addLayerGroup((style.name || "roads") + " (roadstyle)", rowIds);
+    if (app.addLayerGroup) {
+      const top = app.addLayerGroup((style.name || "roads") + " (roadstyle)", rowIds);
+      if (featureRows.length) {
+        const fg = app.addLayerGroup("features", featureRows);
+        if (app.moveLayerGroupToGroup && top && fg) app.moveLayerGroupToGroup(fg, top);
+      }
+    }
   }
   if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); }   // the popup stays at its road while the map moves, as on the page
-  added.push({url, prefix, layerIds, sourceIds, rowIds});
+  added.push({url, prefix, layerIds, sourceIds, rowIds: rowIds.concat(featureRows)});
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
 }
 
@@ -316,147 +330,68 @@ function removeAll() {
 
 const fail = (e) => { console.error(e); alert(String(e.message || e)); };
 
-// A duckOSM database from your disk, read in the browser (duckosm.js, DuckDB-wasm): no server and no export. The roads get
-// roadstyle's look (looks/default.json, with their casing cut into heads at the file's drawing positions), the base map
-// mapstyle's (looks/mapstyle.json), the boundary roadstyle's outline: one GeoLibre row per layer, in one folder.
-const opened = [];                   // [{sources, layers, rows}]
+// the plugin's own files (looks, py/worker.js, py/pkgs.zip, popup.css / popup.js): by their URL when GeoLibre gives one (a plugin installed by its
+// manifest URL); a plugin installed from a .zip has none, so the zip's index.js carries them (write_plugin_zip fills ASSETS)
+const ASSETS = /*__ASSETS__*/null;
+const TYPES = {js: "text/javascript", css: "text/css", json: "application/json", zip: "application/zip"};
+function asset(f) {
+  const url = app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f);
+  if (url) return url;
+  if (ASSETS && f in ASSETS) {
+    const ext = f.split(".").pop(), body = ext === "zip" ? Uint8Array.from(atob(ASSETS[f]), (c) => c.charCodeAt(0)) : ASSETS[f];   // a zip as base64
+    return URL.createObjectURL(new Blob([body], {type: TYPES[ext]}));
+  }
+  throw new Error("roadstyle: the plugin has no file " + f + " (install it by its manifest URL, or from the .zip that write_plugin_zip makes)");
+}
+const defaultLook = () => asset("looks/default.json");
+
+// A duckOSM database from your disk: roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a
+// worker, py/worker.js; no server, no export), so it is the map of their pages; the plugin adds the style it makes as rows.
+let pyWorker = null, status = null;
+function say(m, text) {                              // a line on the map while the map is being made
+  console.info("roadstyle:", text);
+  if (!status) {
+    status = document.createElement("div");
+    status.className = "maplibregl-ctrl maplibregl-ctrl-group rs-plugin-status";
+    status.style.cssText = "position:absolute;left:50%;top:10px;transform:translateX(-50%);padding:4px 10px;z-index:5";
+    m.getContainer().appendChild(status);
+  }
+  status.textContent = "roadstyle: " + text;
+}
+function unsay() { if (status) status.remove(); status = null; }
+
 function openDatabase() {
   const input = Object.assign(document.createElement("input"), {type: "file", accept: ".duckdb"});
   input.onchange = () => (async () => {
     const file = input.files && input.files[0];
     if (!file) return;
-    const say = (step) => console.info("roadstyle:", file.name, "-", step);
-    const [roadLook, mapLook] = await Promise.all([defaultLook(), defaultMapLook()].map(async (u) => (await fetch(u)).json()));
-    await loadUI({css: asset("popup.css"), js: asset("popup.js"), popup: roadLook.popup.columns, tooltip: false, hover_delay_ms: roadLook.hover_delay_ms});
-    // GeoLibre runs this file from a blob, so a relative import does not resolve: duckosm.js by its asset URL
-    const {readDuckOSM, casingPieces} = await import(asset("duckosm.js"));
-    const data = await readDuckOSM(file, say);
-    say("drawing");
-    drawDuckOSM(data, file.name, roadLook, mapLook, casingPieces);
-    if (!data.levels) alert("roadstyle: " + file.name + " has no drawing order (visualization.edge_levels), so every road is drawn at one " +
-                            "position: bridges and tunnels are not over or under other roads. Store it in the file with: duckosm levels " + file.name);
-  })().catch(fail);
+    const m = map(), name = file.name.replace(/\.duckdb$/i, "");
+    const first = !pyWorker;
+    if (first)                                       // a worker from a blob: GeoLibre's page cannot start one from another address
+      pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
+    const msg = {db: await file.arrayBuffer(), name};
+    if (first) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();
+    const style = await new Promise((done, fail_) => {
+      pyWorker.onmessage = ({data}) => {
+        if (data.step) say(m, data.step);
+        else if (data.error) fail_(new Error("roadstyle: the map of " + file.name + " failed: " + data.error));
+        else done(data.style);
+      };
+      pyWorker.postMessage(msg, [msg.db, ...(msg.pkgs ? [msg.pkgs] : [])]);
+    });
+    say(m, "drawing");
+    await addStyleObject(JSON.parse(style), file.name);
+    unsay();
+  })().catch((e) => { unsay(); fail(e); });
   input.click();
 }
 
-function drawDuckOSM(data, name, roadLook, mapLook, casingPieces) {
-  const m = map(), k = `rd${opened.length}-`;
-  const sources = [], layers = [], groups = new Map(), NONE = "\u0000";
-  const src = (id, d) => { m.addSource(k + id, {type: "geojson", data: d}); sources.push(k + id); return k + id; };
-  const add = (group, spec, source) => {
-    const id = k + spec.id;
-    m.addLayer({...spec, id, source});
-    layers.push(id);
-    if (group) { if (!groups.has(group)) groups.set(group, []); groups.get(group).push(id); }
-    return id;
-  };
-  // a look's hover layers: they show only the feature under the mouse (onLookMove sets the id the last filter keeps)
-  const hoverOf = (look, source, tag) => ((look.hover && look.hover.layers) || []).map((l) => add(null,
-    {...l, id: `${tag}-hover-${l.id}`, filter: ["all", ...(l.filter ? [l.filter] : []), ["==", ["to-string", ["get", look.hover.id]], NONE]]}, source));
-  const entries = [];
-  for (const t of mapLook.order) {                   // the base map, in mapstyle's draw order
-    const look = mapLook.files["features_" + t], d = data.features[t];
-    if (!look || !d) continue;
-    const s = src("f-" + t, d);
-    const ids = look.layers.map((l) => add(l.id.replace(/-(outline|pattern)$/, ""), {...l, id: `f-${t}-${l.id}`}, s));
-    entries.push({ids, hoverIds: hoverOf(look, s, "f-" + t), hover: look.hover, popup: look.popup});
-  }
-  if (data.boundary && roadLook.boundary)
-    roadLook.boundary.layers.forEach((l) => add("boundary", {...l, id: "b-" + l.id}, src("b", data.boundary)));
-  const rs = src("roads", data.roads), pieces = casingPieces(data.roads, roadLook.head_m), ps = src("pieces", pieces);
-  const have = new Set([...pieces.features.map((f) => f.properties.casing_level), ...data.roads.features.map((f) => f.properties.fill_level ?? 0)]);
-  const roadIds = [];
-  for (const l of roadLook.layers) {
-    const pos = l.metadata && l.metadata["roadstyle:position"];
-    if (pos != null && !have.has(pos)) continue;
-    roadIds.push(add("roads", {...l, id: "r-" + l.id}, l.id.startsWith("casing") ? ps : rs));
-  }
-  entries.push({ids: roadIds, hoverIds: hoverOf(roadLook, rs, "r"), hover: roadLook.hover, popup: roadLook.popup});
-  const rows = [];
-  if (app.registerExternalNativeLayer) {
-    [...groups].forEach(([g, ids], i) => {           // in draw order: GeoLibre lists the last one on top
-      const id = k + "row" + i;
-      app.registerExternalNativeLayer({
-        id, name: g === "roads" ? name + " · roads" : g, type: "vector", nativeLayerIds: ids, sourceIds: sources, opacity: 1, style: {},
-        metadata: {file: name, group: g}, paintMode: "plugin",
-        paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))},
-      });
-      rows.push(id);
-    });
-    if (app.addLayerGroup) app.addLayerGroup(name + " (roadstyle)", rows);
-  }
-  for (const e of entries) styled.push({layer: k, own: false, ...e});
-  if (styled.length === entries.length) { m.on("mousemove", onLookMove); m.on("click", onLookClick); }
-  opened.push({sources, layers, rows});
-  let w = 180, s_ = 90, e_ = -180, n = -90;          // fit the map to the roads
-  for (const f of data.roads.features) for (const [x, y] of f.geometry.coordinates) { w = Math.min(w, x); e_ = Math.max(e_, x); s_ = Math.min(s_, y); n = Math.max(n, y); }
-  if (w <= e_) m.fitBounds([[w, s_], [e_, n]], {padding: 20, duration: 0});
-}
-
-function closeDatabases() {
-  const m = map();
-  for (const o of opened.splice(0)) {
-    if (app.unregisterExternalNativeLayer) o.rows.forEach((id) => app.unregisterExternalNativeLayer(id));
-    if (!m) continue;
-    o.layers.slice().reverse().forEach((id) => m.getLayer(id) && m.removeLayer(id));
-    o.sources.forEach((id) => m.getSource(id) && m.removeSource(id));
-  }
-}
-
-// A duckOSM folder (duckosm export-gis --format geoparquet): GeoLibre opens many GeoParquet files from one link
-// (?data=A&data=B), so the plugin makes that link from layers.json and adds roadstyle_look=<look URL>. After the
-// page opens it again, the plugin styles every edges layer with the look.
-const ORDER = {boundary: 0, features: 1, edges: 2}, MODES = {walking: 0, cycling: 1, driving: 2};
-// the plugin's own files (looks, duckosm.js, popup.css / popup.js): by their URL when GeoLibre gives one (a plugin installed by its
-// manifest URL); a plugin installed from a .zip has none, so the zip's index.js carries them (write_plugin_zip fills ASSETS)
-const ASSETS = /*__ASSETS__*/null;
-const TYPES = {js: "text/javascript", css: "text/css", json: "application/json"};
-function asset(f) {
-  const url = app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f);
-  if (url) return url;
-  if (ASSETS && f in ASSETS) return URL.createObjectURL(new Blob([ASSETS[f]], {type: TYPES[f.split(".").pop()]}));
-  throw new Error("roadstyle: the plugin has no file " + f + " (install it by its manifest URL, or from the .zip that write_plugin_zip makes)");
-}
-const defaultLook = () => asset("looks/default.json"), defaultMapLook = () => asset("looks/mapstyle.json");
-
-async function openFolder(folder, lookUrl, mapLookUrl) {
-  const base = folder.replace(/layers\.json$/, "").replace(/\/?$/, "/");
-  const res = await fetch(base + "layers.json");
-  if (!res.ok) throw new Error("roadstyle: no layers.json in " + base + " (HTTP " + res.status + "). Write the folder with: duckosm export-gis --format geoparquet");
-  const mapLook = await (await fetch(mapLookUrl)).json(), tables = mapLook.order;   // the base map's draw order, from mapstyle
-  // not opened: the nodes, and a features table that mapstyle does not draw (place_labels)
-  const files = (await res.json()).layers.filter((f) => f.kind !== "nodes" && (f.kind !== "features" || mapLook.files[f.file.replace(/\.parquet$/, "")])).sort((a, b) =>
-    (ORDER[a.kind] ?? 9) - (ORDER[b.kind] ?? 9) || (MODES[a.mode] ?? 9) - (MODES[b.mode] ?? 9) ||
-    tables.indexOf(a.table) - tables.indexOf(b.table));
-  const q = new URLSearchParams();
-  files.forEach((f) => q.append("data", new URL(f.file, base).href));
-  q.set("roadstyle_look", lookUrl);
-  q.set("mapstyle_look", mapLookUrl);
-  location.assign(location.origin + location.pathname + "?" + q.toString());
-}
-
-// Wait for GeoLibre to load the files of the link that pick(name) gives a look, then style each one.
-async function styleFiles(pick, label) {
-  const want = new URLSearchParams(location.search).getAll("data")
-    .map((u) => decodeURIComponent(new URL(u).pathname.split("/").pop()).replace(/\.(geo)?parquet$/i, ""))
-    .filter((n) => pick(n));
-  const t0 = Date.now();
-  for (;;) {
-    const have = (app.listLayers ? app.listLayers() : []).filter((l) => want.includes(l.name));
-    if (have.length === want.length && have.every((l) => map() && map().getSource("source-" + l.id))) {
-      for (const l of have) await styleLayer(l.id, null, pick(l.name), label);
-      return;
-    }
-    if (Date.now() - t0 > 600000) throw new Error("roadstyle: GeoLibre did not load " + want.join(", ") + " in 10 minutes; the look is not applied.");
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-}
 
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.9.0",
-  urlParameterNames: ["roadstyle", "roadstyle_look", "mapstyle_look"],
+  version: "0.11.0",
+  urlParameterNames: ["roadstyle"],
   activate(host) {
     app = host;
     if (app.registerToolbarMenu) {
@@ -464,9 +399,6 @@ export const plugin = {
         id: "roadstyle-menu", label: "roadstyle",
         items: [{id: "db", label: "Open a duckOSM database…", onSelect: () => {
           try { openDatabase(); } catch (e) { fail(e); }
-        }}, {id: "folder", label: "Open a duckOSM folder…", onSelect: () => {
-          const url = prompt("The URL of a duckOSM GeoParquet folder (with layers.json):");
-          if (url) openFolder(url.trim(), defaultLook(), defaultMapLook()).catch(fail);
         }}, {id: "add", label: "Add a roadstyle layer…", onSelect: () => {
           const url = prompt("The URL of a roadstyle export (style.json):");
           if (url) addStyle(url.trim()).catch(fail);
@@ -481,19 +413,12 @@ export const plugin = {
   async handleUrlParameters(host, params) {
     app = app || host;
     for (const url of params.getAll("roadstyle")) await addStyle(url).catch(fail);
-    for (const url of params.getAll("roadstyle_look")) {
-      const look = await (await fetch(url)).json();
-      styleFiles((n) => (n.startsWith("edges_") ? look : n === "boundary" ? look.boundary || null : null), "roadstyle look").catch(fail);
-    }
-    for (const url of params.getAll("mapstyle_look")) {
-      const look = await (await fetch(url)).json();
-      styleFiles((n) => look.files[n] || null, look.name).catch(fail);
-    }
   },
   deactivate() {
     removeAll();
     unstyleAll();
-    closeDatabases();
+    if (pyWorker) pyWorker.terminate();
+    pyWorker = null;
     if (disposeMenu) disposeMenu();
     disposeMenu = null;
   },

@@ -5,18 +5,13 @@ own base map, with roadstyle's look and the roads' data. One plain ES module, no
 
 - **Install:** GeoLibre › Settings › Manage Plugins › Settings › Manifest URLs: the URL of this folder's `plugin.json`, then Add.
 - **Open an export:** the menu **roadstyle** › Add a roadstyle layer, or `?roadstyle=<URL of style.json>` in the GeoLibre link.
-- **Open a duckOSM database:** the menu **roadstyle** › Open a duckOSM database asks for a `.duckdb` file on your disk. The
-  plugin reads it in the browser with DuckDB-wasm (`duckosm.js`; no server, no export), and draws the roads of every mode
-  with roadstyle's look (`looks/default.json`; each casing cut into its heads at the file's drawing positions), the
-  `features.*` base map with mapstyle's look (`looks/mapstyle.json`) and the boundary: one row per layer, in one folder.
-  A file with no `visualization.edge_levels` draws every road at one position, and the plugin says so (`duckosm levels`).
-  Make the plugin's files again after a change of the config: `python -c "import roadstyle.export as e; e.write_plugin_files('geolibre-plugin')"`
-  and mapstyle's `export_look('geolibre-plugin/looks/mapstyle.json')`.
-- **Open a duckOSM folder:** the menu **roadstyle** › Open a duckOSM folder takes the URL of a folder from
-  `duckosm export-gis --format geoparquet` (it has `layers.json`). The plugin opens GeoLibre again with every file of the
-  folder as a data layer (`?data=…&data=…&roadstyle_look=…&mapstyle_look=…`), but not the nodes and not a features table
-  that mapstyle does not draw. It puts roadstyle's look (`looks/default.json`, from `rs.export_look`) on the edges and the
-  boundary, and mapstyle's look (`looks/mapstyle.json`, from `mapstyle.look.export_look`) on each `features_<table>` layer.
+- **Open a duckOSM database:** the menu **roadstyle** › Open a duckOSM database asks for a `.duckdb` file on your disk.
+  roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`;
+  `mapstyle.export.export_inline`), so it is the map of mapstyle's page: one row per layer, the base map's layers in a
+  "features" folder. No server and no export. The first time it loads Python and the packages (about 30 s).
+- **Install from a file:** `python -c "import roadstyle.export as e; e.write_plugin_files('geolibre-plugin'); e.write_plugin_zip('geolibre-plugin', 'out/roadstyle-geolibre-plugin.zip')"`
+  makes the plugin's files (the look, the popup files, `py/pkgs.zip` with roadstyle's and mapstyle's Python) and one `.zip`
+  for GeoLibre › Settings › Manage Plugins › Settings › Install from file.
 - **Style a data layer:** the menu **roadstyle** › Style a layer with roadstyle puts a roadstyle look (`rs.export_look`;
   the default is `looks/default.json`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or
   GeoParquet layer. GeoLibre's own line of the layer becomes transparent; Identify still shows the data.
