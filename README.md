@@ -1,32 +1,61 @@
 # roadstyle for GeoLibre
 
-A GeoLibre plugin that adds a roadstyle export (`rs.export_style`: `style.json`, tiles, sprite) as one layer over GeoLibre's
-own base map, with roadstyle's look and the roads' data. One plain ES module, no build step.
+A [GeoLibre](https://web.geolibre.app) plugin that draws roads in roadstyle's look (casings, drawing positions, tunnels,
+bridge decks), with the roads' data, over GeoLibre's own base map. One plain ES module, no build step.
 
-- **Install:** GeoLibre › Settings › Manage Plugins › Settings › Manifest URLs: the URL of this folder's `plugin.json`, then Add.
-- **Open an export:** the menu **roadstyle** › Add a roadstyle layer, or `?roadstyle=<URL of style.json>` in the GeoLibre link.
-- **Open a duckOSM database:** the menu **roadstyle** › Open a duckOSM database asks for a `.duckdb` file on your disk.
-  roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`;
-  `mapstyle.export.export_inline`), so it is the map of mapstyle's page: one row per layer, the base map's layers in a
-  "features" folder. No server and no export. The first time it loads Python and the packages (about 30 s).
-- **Install from a file:** `pip install roadstyle mapstyle`, then `python build.py`. It makes the plugin's generated files (the
-  look, the popup files, `py/pkgs.zip` with roadstyle's and mapstyle's Python) and `out/roadstyle-geolibre.zip` for
-  GeoLibre › Settings › Manage Plugins › Settings › Install from file. The `py/pkgs.zip` in this repo is from the time of
-  plugin 0.11.0 (an old roadstyle): run `python build.py --files` to refresh it, and increase `version` in `plugin.json`.
-- **Style a data layer:** the menu **roadstyle** › Style a layer with roadstyle puts a roadstyle look (`rs.export_look`;
-  the default is `looks/default.json`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or
-  GeoParquet layer. GeoLibre's own line of the layer becomes transparent; Identify still shows the data.
-- **Not in the menu?** Plugins › Installed › roadstyle makes the plugin active.
-- **After a change to the plugin:** GeoLibre trusts a plugin by the hash of its files. When the files change, it does not load
-  the plugin (the console says "changed since you last trusted it"). Remove the manifest URL in Manage Plugins › Settings,
-  add it again and accept the review. Increase `version` in `plugin.json` with each change.
-- **Hover and popup of a look:** each look file has a `hover` layer and the `popup` columns, made from the config files (roadstyle's
-  selection colour; roadstyle's default road fields; mapstyle's `layers.yaml` `popup`). The plugin only sets which feature the
-  hover layer shows and fills the popup, in MapLibre's own popup look. A GeoLibre tool (Identify) has the click first.
-- **What it does:** adds the style's sources and layers to GeoLibre's map, registers them as one row of the Layers panel
-  (`registerExternalNativeLayer`), shows a road's data on click (not while a GeoLibre tool such as Identify is on), and
-  highlights the road under the cursor. The names take a font of GeoLibre's base map, because a map has one glyph source.
-- **What it does not do yet:** roadstyle's page arrows (one per one-way street; the export has fixed rules instead), the
-  colour options, `rsColor` and the other `rs*` functions.
+## The menu
 
-Design: `docs/design/style_export.md` in the [roadstyle repo](https://github.com/Khoshkhah/roadstyle), version 2. This repo was the `geolibre-plugin/` folder of roadstyle's `geolibre` branch; its history is kept.
+The plugin adds the menu **roadstyle**:
+
+| Item | Does |
+|---|---|
+| Open a duckOSM database… | Asks for a `.duckdb` file on your disk. roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`). No server and no export. The first time, it loads Python and the packages (about 30 s). A box shows the progress, and Cancel stops it. The result is one row for each layer, with the base map's layers in a "features" folder. |
+| Add a roadstyle layer… | Asks for the URL of a roadstyle export (`style.json`, from `rs.export_style`). The link parameter `?roadstyle=<URL>` does the same. |
+| Style a layer with roadstyle… | Puts a roadstyle look (`rs.export_look`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or GeoParquet layer. Without a look URL, it uses `looks/default.json`. GeoLibre's own line of the layer becomes transparent, and Identify still shows the data. |
+| Remove roadstyle layers | Removes all that the plugin added. |
+
+A click on a road opens a popup with its data (not while a GeoLibre tool such as Identify is on). Resting the mouse on a road
+lights it. The popup shows every name and value as text.
+
+## Install
+
+1. **By URL.** GeoLibre › Settings › Manage Plugins › Settings › Manifest URLs: the URL of `plugin.json`, then Add. The host must
+   serve `.js` files as `text/javascript`. GitHub Pages does. `raw.githubusercontent.com` does not, so GeoLibre cannot load the
+   plugin from there.
+2. **From a file.** `pip install roadstyle mapstyle`, then `python build.py`. It makes the generated files (the look, the popup
+   files, `py/pkgs.zip` with roadstyle's and mapstyle's Python) and `out/roadstyle-geolibre.zip` for GeoLibre › Settings ›
+   Manage Plugins › Settings › Install from file.
+
+**Not in the menu?** Plugins › Installed › roadstyle makes the plugin active.
+
+**After a change to the plugin:** GeoLibre trusts a plugin by the hash of its files. When the files change, it does not load the
+plugin (the console says "changed since you last trusted it"). Remove the manifest URL, add it again and accept the review.
+Increase `version` in `plugin.json` and in `index.js` (`VERSION`) with each change. A test checks that the two are equal.
+
+## What the plugin needs
+
+- **mapstyle with `mapstyle.export`.** "Open a duckOSM database" calls `mapstyle.export.export_inline`. mapstyle 0.5.1 on PyPI
+  does not have this module yet, so `py/pkgs.zip` in this repo holds a copy from a mapstyle branch. `python build.py --files` with
+  the released mapstyle makes a `pkgs.zip` without it, and then this menu item fails.
+- **Network.** The worker loads Pyodide from `cdn.jsdelivr.net` and two small packages from PyPI (`folium`, `branca`).
+- **Memory.** The `.duckdb` file is read into memory twice (the browser and the worker). A large file needs a large amount of memory.
+
+## What it does not do yet
+
+roadstyle's page arrows (one per one-way street; the export has fixed rules instead), the colour options, `rsColor` and the other
+`rs*` functions.
+
+## Tests
+
+The tests run the plugin in a stand-in for GeoLibre (`tests/host.html`: a MapLibre map and the host calls that the plugin uses).
+They need `pytest`, `playwright` with Chromium, `node` and the network (MapLibre is loaded from a CDN).
+
+```bash
+python -m pytest tests -q                                              # a few seconds
+RS_TEST_DB=/path/to/monaco.duckdb python -m pytest tests -q -m slow    # also makes a map of a database with Pyodide (minutes)
+```
+
+The tests do not run GeoLibre itself. After a change, also open the plugin in https://web.geolibre.app.
+
+Design: `docs/design/style_export.md` in the [roadstyle repo](https://github.com/Khoshkhah/roadstyle), version 2. This repo was the
+`geolibre-plugin/` folder of roadstyle's `geolibre` branch; its history is kept.

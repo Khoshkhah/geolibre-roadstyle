@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>A stand-in for GeoLibre: a MapLibre map and the host calls that the plugin uses</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<div id="map" style="position:absolute;inset:0"></div>
+<script type="module">
+const q = new URLSearchParams(location.search);
+window.NO_ASSET_URL = q.has("noassets");                                    // a plugin installed from the .zip: no URL for its files
+const {default: plugin} = await import(q.get("plugin") || "/index.js");
+const map = new maplibregl.Map({container: "map", center: [18.06, 59.33], zoom: 14,
+  style: {version: 8, sources: {}, layers: [{id: "bg", type: "background", paint: {"background-color": "#eeeeee"}}]}});
+const rows = [], menu = {items: null}, groups = [];
+const app = {
+  getMap: () => map,
+  getActiveMapTool: () => null,
+  resolvePluginAssetUrl: (id, f) => (window.NO_ASSET_URL ? null : "/" + f),   // a plugin installed by its manifest URL
+  registerToolbarMenu: (m) => { menu.items = m.items; return () => { menu.items = null; }; },
+  registerExternalNativeLayer: (r) => rows.push(r),
+  unregisterExternalNativeLayer: (id) => { const i = rows.findIndex((r) => r.id === id); if (i >= 0) rows.splice(i, 1); },
+  addLayerGroup: (name, ids) => { groups.push({name, ids}); return groups.length; },
+  listLayers: () => window.LAYERS || [],
+};
+window.rs = {plugin, app, map, rows, menu, groups};
+map.on("load", () => { plugin.activate(app); window.ready = true; });
+</script>

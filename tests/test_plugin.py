@@ -1,0 +1,193 @@
+"""Tests of the plugin in a stand-in for GeoLibre (tests/host.html: a MapLibre map and the host calls the plugin uses).
+
+    python -m pytest tests -q                    # fast tests (a few seconds; needs playwright and chromium, and the network for MapLibre)
+    RS_TEST_DB=/path/to/monaco.duckdb python -m pytest tests -q -m slow    # also makes a map of a database with Pyodide (1-2 minutes)
+"""
+import functools
+import http.server
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+sync_api = pytest.importorskip("playwright.sync_api")
+
+
+@pytest.fixture(scope="module")
+def base():
+    """The repo folder served over http (a module needs a JavaScript MIME type, a file:// page cannot import one)."""
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    handler = functools.partial(Quiet, directory=str(ROOT))
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+@pytest.fixture(scope="module")
+def browser():
+    with sync_api.sync_playwright() as p:
+        try:
+            b = p.chromium.launch(args=["--use-gl=swiftshader", "--enable-unsafe-swiftshader"])
+        except sync_api.Error as e:
+            pytest.skip(f"playwright browser missing: {e}")
+        yield b
+        b.close()
+
+
+@pytest.fixture
+def host(browser, base):
+    """A page with the stand-in host and the plugin activated; errors of the page are collected in page.errors."""
+    page = browser.new_page(viewport={"width": 1000, "height": 700})
+    page.errors = []
+    page.on("pageerror", lambda e: page.errors.append(str(e)))
+    page.goto(f"{base}/tests/host.html")
+    page.wait_for_function("() => window.ready === true", timeout=60000)
+    page.base = base
+    yield page
+    page.close()
+
+
+def add_style(page, path="/tests/style.json"):
+    page.evaluate("""async (p) => { await rs.plugin.handleUrlParameters(rs.app, new URLSearchParams("roadstyle=" + p));
+                                    await new Promise((r) => rs.map.once("idle", r)); }""", path)
+
+
+def test_versions_match():
+    manifest = json.loads((ROOT / "plugin.json").read_text())["version"]
+    code = re.search(r'const VERSION = "([^"]+)"', (ROOT / "index.js").read_text()).group(1)
+    assert manifest == code
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("f", ["index.js", "py/worker.js", "popup.js"])
+def test_syntax(f):
+    subprocess.run(["node", "--check", str(ROOT / f)], check=True)
+
+
+def test_menu(host):
+    ids = host.evaluate("() => rs.menu.items.map((i) => i.id)")
+    assert ids == ["db", "add", "look", "remove"]
+    assert host.errors == []
+
+
+def test_popup_text_is_escaped(host):
+    """A tag value with HTML must show as text, not run (the page's popup.js alone puts the values in as HTML)."""
+    add_style(host)
+    pt = host.evaluate("() => { const p = rs.map.project([18.06, 59.33]); const r = rs.map.getCanvas().getBoundingClientRect(); return [p.x + r.left, p.y + r.top]; }")
+    host.mouse.click(*pt)
+    host.wait_for_selector(".maplibregl-popup-content", timeout=10000)
+    text = host.inner_text(".maplibregl-popup-content")
+    assert '<img src=x onerror="window.__pwn=1">' in text and "A&B <b>x</b>" in text
+    assert host.evaluate("() => window.__pwn") is None
+    assert host.query_selector(".maplibregl-popup-content img") is None and host.query_selector(".maplibregl-popup-content b b") is None
+    assert host.errors == []
+
+
+def test_add_dialog_and_remove(host):
+    n = host.evaluate("() => rs.map.getStyle().layers.length")
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'add').onSelect()")
+    host.wait_for_selector("[role=dialog]")
+    host.keyboard.press("Escape")                                      # cancel: nothing is added
+    assert host.query_selector("[role=dialog]") is None
+    assert host.evaluate("() => rs.map.getStyle().layers.length") == n
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'add').onSelect()")
+    host.fill("[role=dialog] input", f"{host.base}/tests/style.json")
+    host.keyboard.press("Enter")
+    host.wait_for_function("(n) => rs.map.getStyle().layers.length > n", arg=n, timeout=10000)
+    assert host.evaluate("() => rs.rows.length") >= 1
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'remove').onSelect()")
+    host.wait_for_function("(n) => rs.map.getStyle().layers.length === n", arg=n, timeout=10000)
+    assert host.evaluate("() => rs.rows.length") == 0
+    assert host.errors == []
+
+
+def test_bad_url_is_a_message_not_a_crash(host):
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'add').onSelect()")
+    host.fill("[role=dialog] input", f"{host.base}/tests/no-such-file.json")
+    host.keyboard.press("Enter")
+    host.wait_for_selector("[role=alert]", timeout=10000)
+    assert "404" in host.inner_text("[role=alert]")
+
+
+def test_project_state_keeps_styles_not_databases(host):
+    add_style(host)
+    assert host.evaluate("() => rs.plugin.getProjectState()") == {"urls": ["/tests/style.json"]}
+    host.evaluate("() => rs.plugin.applyProjectState(rs.app, {urls: ['monaco.duckdb', 5, '/tests/style.json']})")   # a file name is not opened
+    host.wait_for_timeout(500)
+    assert host.query_selector("[role=alert]") is None
+    assert host.evaluate("() => rs.plugin.getProjectState().urls.length") == 1
+
+
+def test_zip_install_carries_its_files(browser, base, tmp_path):
+    """A plugin installed from the .zip has no URL for its files: its index.js carries them (blob URLs, made once)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rs_build", ROOT / "build.py")
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+    z = build.write_plugin_zip(ROOT, tmp_path / "plugin.zip")
+    out = ROOT / "out" / "_ziptest"
+    out.mkdir(parents=True, exist_ok=True)
+    import zipfile
+    (out / "index.js").write_bytes(zipfile.ZipFile(z).read("index.js"))
+    page = browser.new_page()
+    errs = []
+    page.on("pageerror", lambda e: errs.append(str(e)))
+    page.goto(f"{base}/tests/host.html?plugin=/out/_ziptest/index.js&noassets=1")
+    page.wait_for_function("() => window.ready === true", timeout=60000)
+    page.evaluate("() => { window.__blobs = 0; const o = URL.createObjectURL; URL.createObjectURL = (b) => { window.__blobs++; return o.call(URL, b); }; }")
+    add_style(page)
+    for _ in range(2):                                                # the popup files come from the .zip, one blob URL for each
+        pt = page.evaluate("() => { const p = rs.map.project([18.06, 59.33]); const r = rs.map.getCanvas().getBoundingClientRect(); return [p.x + r.left, p.y + r.top]; }")
+        page.mouse.click(*pt)
+        page.wait_for_selector(".maplibregl-popup-content", timeout=10000)
+    assert page.evaluate("() => window.__blobs") <= 2                # popup.css and popup.js, not one for each click
+    assert errs == []
+    page.close()
+
+
+# ---- slow: Pyodide and a real database -------------------------------------------------------------------------------------------
+
+DB = os.environ.get("RS_TEST_DB")
+slow = pytest.mark.skipif(not DB or not Path(DB or "x").exists(), reason="set RS_TEST_DB to a duckOSM .duckdb file")
+
+
+def open_db(page):
+    with page.expect_file_chooser() as fc:
+        page.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
+    fc.value.set_files(DB)
+
+
+@pytest.mark.slow
+@slow
+def test_database_map_and_retry_after_a_failed_start(host):
+    """The first start fails (the Python packages are cut off); the second try must send them again and succeed."""
+    failed = []
+
+    def cut(route):
+        if not failed:
+            failed.append(1)
+            route.fulfill(status=200, body=b"not a zip")
+        else:
+            route.continue_()
+
+    host.route("**/py/pkgs.zip", cut)
+    open_db(host)
+    host.wait_for_selector("[role=alert]", timeout=240000)             # the first try fails with a message
+    assert host.query_selector(".rs-pl-progress") is None
+    host.evaluate("() => document.querySelector('[role=alert] button').click()")
+    n = host.evaluate("() => rs.map.getStyle().layers.length")
+    open_db(host)                                                      # the second try works
+    host.wait_for_function("(n) => rs.map.getStyle().layers.length > n", arg=n, timeout=360000)
+    assert host.evaluate("() => rs.plugin.getProjectState().urls") == []          # a database's map is not saved by address
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'remove').onSelect()")
+    assert host.errors == []

@@ -1,0 +1,6 @@
+{"version": 8, "name": "test roads", "center": [18.06, 59.33], "zoom": 14,
+ "metadata": {"roadstyle:interaction": {"popup": null, "tooltip": false, "hover_delay_ms": 0}},
+ "sources": {"roads": {"type": "geojson", "data": {"type": "FeatureCollection", "features": [
+   {"type": "Feature", "id": 1, "properties": {"name": "<img src=x onerror=\"window.__pwn=1\">", "highway": "residential", "ref": "A&B <b>x</b>"},
+    "geometry": {"type": "LineString", "coordinates": [[18.05, 59.33], [18.07, 59.33]]}}]}}},
+ "layers": [{"id": "roads", "type": "line", "source": "roads", "paint": {"line-width": 14, "line-color": "#d33"}}]}

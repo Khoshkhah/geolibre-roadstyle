@@ -11,7 +11,79 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
+const VERSION = "0.12.0";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+
+// ---- a small interface of the plugin's own (no prompt() or alert()): a dialog, a message, a progress box ----------------------
+let uiReady = false;
+function uiCss() {
+  if (uiReady) return;
+  uiReady = true;
+  const st = document.createElement("style");
+  st.textContent = `.rs-pl{color-scheme:light dark;font:14px/1.45 system-ui,"Segoe UI",sans-serif}
+.rs-pl-overlay{position:fixed;inset:0;background:#0006;display:grid;place-items:center;z-index:2000}
+.rs-pl-box{background:Canvas;color:CanvasText;border-radius:12px;padding:18px 20px;width:min(440px,92vw);box-shadow:0 8px 32px #0005}
+.rs-pl-box h3{margin:0 0 12px;font-size:16px}
+.rs-pl-box label{display:block;margin:10px 0 4px;font-weight:600;font-size:13px}
+.rs-pl-box input,.rs-pl-box select{width:100%;box-sizing:border-box;font:inherit;padding:7px 9px;border-radius:8px;border:1px solid #8886;background:Field;color:FieldText}
+.rs-pl-hint{margin:4px 0 0;color:GrayText;font-size:12px}
+.rs-pl-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.rs-pl button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid #8886;background:ButtonFace;color:ButtonText;cursor:pointer}
+.rs-pl button[type=submit]{background:#2563eb;border-color:#2563eb;color:#fff}
+.rs-pl button:focus-visible,.rs-pl input:focus-visible,.rs-pl select:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.rs-pl-toast,.rs-pl-progress{position:fixed;left:50%;transform:translateX(-50%);z-index:2001;display:flex;gap:12px;align-items:center;
+  background:Canvas;color:CanvasText;border-radius:10px;padding:10px 14px;box-shadow:0 4px 18px #0004;max-width:min(560px,92vw)}
+.rs-pl-toast{bottom:18px;border-left:4px solid #dc2626}.rs-pl-toast.warn{border-left-color:#d97706}.rs-pl-toast.info{border-left-color:#2563eb}
+.rs-pl-progress{top:14px}`;
+  document.head.appendChild(st);
+}
+// a dialog: fields [{name, label, type, options, placeholder, required, hint}] -> {name: value}, or null when cancelled
+function ask(title, fields, ok = "OK") {
+  uiCss();
+  return new Promise((done) => {
+    const back = document.activeElement, ov = document.createElement("div"), form = document.createElement("form");
+    ov.className = "rs-pl-overlay rs-pl";
+    form.className = "rs-pl-box";
+    form.setAttribute("role", "dialog"); form.setAttribute("aria-modal", "true"); form.setAttribute("aria-label", title);
+    form.innerHTML = `<h3>${esc(title)}</h3>` + fields.map((f, i) => `<label for="rs-pl-${i}">${esc(f.label)}</label>` +
+      (f.type === "select"
+        ? `<select id="rs-pl-${i}">${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select>`
+        : `<input id="rs-pl-${i}" type="${f.type || "text"}" placeholder="${esc(f.placeholder || "")}"${f.required ? " required" : ""}>`) +
+      (f.hint ? `<p class="rs-pl-hint">${esc(f.hint)}</p>` : "")).join("") +
+      `<div class="rs-pl-btns"><button type="button" data-cancel>Cancel</button><button type="submit">${esc(ok)}</button></div>`;
+    const close = (v) => { document.removeEventListener("keydown", onKey, true); ov.remove(); if (back && back.focus) back.focus(); done(v); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(null); } };
+    form.onsubmit = (e) => { e.preventDefault(); close(Object.fromEntries(fields.map((f, i) => [f.name, form.querySelector("#rs-pl-" + i).value.trim()]))); };
+    form.querySelector("[data-cancel]").onclick = () => close(null);
+    ov.onmousedown = (e) => { if (e.target === ov) close(null); };
+    document.addEventListener("keydown", onKey, true);
+    ov.appendChild(form); document.body.appendChild(ov);
+    const first = form.querySelector("input,select"); if (first) first.focus();
+  });
+}
+// a message that stays until it is clicked (an error) or for a while; role=alert so a screen reader says it
+function notify(text, kind = "error") {
+  uiCss();
+  console[kind === "error" ? "error" : "info"]("roadstyle:", text);
+  const t = document.createElement("div");
+  t.className = "rs-pl rs-pl-toast " + kind; t.setAttribute("role", kind === "error" ? "alert" : "status");
+  t.innerHTML = `<span>${esc(text)}</span><button type="button" aria-label="Close">\u2715</button>`;
+  t.querySelector("button").onclick = () => t.remove();
+  document.body.appendChild(t);
+  if (kind !== "error") setTimeout(() => t.remove(), 9000);
+}
+// the progress box of a long job; onCancel makes a Cancel button. Returns {say(text), done()}.
+function progress(text, onCancel) {
+  uiCss();
+  const b = document.createElement("div");
+  b.className = "rs-pl rs-pl-progress"; b.setAttribute("role", "status"); b.setAttribute("aria-live", "polite");
+  b.innerHTML = '<span></span>' + (onCancel ? '<button type="button">Cancel</button>' : "");
+  if (onCancel) b.querySelector("button").onclick = onCancel;
+  const span = b.querySelector("span"), say_ = (t) => { span.textContent = "roadstyle: " + t; console.info("roadstyle:", t); };
+  say_(text); document.body.appendChild(b);
+  return {say: say_, done: () => b.remove()};
+}
 
 // A map has one glyph source, the base map's: the names take a font the base map uses, not the export's own.
 function baseFont(m) {
@@ -86,7 +158,6 @@ function closePopup() {
 // the popup in MapLibre's own popup look (its CSS classes): the plugin holds no style values
 function showPopup(m, point, props, title = null) {
   closePopup();
-  const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
   const rows = Object.entries(props).filter(([k]) => !k.startsWith("__")).map(([k, v]) => `<b>${esc(k)}</b>: ${esc(v)}`);
   popup = document.createElement("div");
   popup.className = "maplibregl-popup maplibregl-popup-anchor-top-left";
@@ -117,7 +188,12 @@ async function loadUI(inter) {
     document.head.appendChild(link);
   }
   const mod = await import(inter.js);
-  rsUI = {inter, rfields: mod._rfields, POPUP: mod.POPUP};
+  // popup.js's _rfields puts the values into HTML as they are; the plugin builds the same lines from _rpairs with every name and value escaped
+  const rfields = (p, only) => {
+    const [name, kv] = mod._rpairs(p, only);
+    return (name ? ["<b>" + esc(name) + "</b>"] : []).concat(kv.map(([k, v]) => "<b>" + esc(k) + "</b>: " + esc(v))).join("<br>");
+  };
+  rsUI = {inter, rfields, POPUP: mod.POPUP};
 }
 function fid(f) { return f && f.id != null ? {source: f.source, ...(f.sourceLayer ? {sourceLayer: f.sourceLayer} : {}), id: f.id} : null; }
 function setState(m, k, st) { if (k) m.setFeatureState(k, st); }
@@ -176,10 +252,12 @@ async function addImages(m, images) {   // {name: data URL, or {url, sdf, pixelR
 }
 
 async function addStyle(url) {
-  return addStyleObject(await (await fetch(url)).json(), url);
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`roadstyle: ${url} answered ${r.status}`);
+  return addStyleObject(await r.json(), url, "style");
 }
 // a roadstyle style (export_style's style.json, or export_inline's style with the data inside) as GeoLibre rows
-async function addStyleObject(style, url) {
+async function addStyleObject(style, url, kind = "style") {
   const m = map();
   if (!m) throw new Error("roadstyle: GeoLibre has no MapLibre map (the plugin needs the MapLibre renderer)");
   await loadUI(style.metadata && style.metadata["roadstyle:interaction"]);
@@ -230,7 +308,7 @@ async function addStyleObject(style, url) {
     }
   }
   if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); }   // the popup stays at its road while the map moves, as on the page
-  added.push({url, prefix, layerIds, sourceIds, rowIds: rowIds.concat(featureRows)});
+  added.push({url, kind, prefix, layerIds, sourceIds, rowIds: rowIds.concat(featureRows)});
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
 }
 
@@ -244,7 +322,7 @@ async function styleLayer(layerId, lookUrl, look = null, label = "roadstyle look
   const m = map();
   const src = "source-" + layerId;
   if (!m || !m.getSource(src)) throw new Error("roadstyle: this layer has no data source the plugin can read (" + src + ")");
-  look = look || await (await fetch(lookUrl)).json();
+  look = look || await (await fetch(lookUrl || asset("looks/default.json"))).json();
   const feats = (app.getLayerFeatures ? app.getLayerFeatures(layerId) : null);
   const props = ((feats && feats.features) || feats || []).map((f) => f.properties || {});
   const missing = (look.columns || []).filter((c) => !props.some((p) => c in p));
@@ -279,8 +357,8 @@ async function styleLayer(layerId, lookUrl, look = null, label = "roadstyle look
   }
   styled.push({layer: layerId, ids: added_, hoverIds, hover: look.hover, popup: look.popup, lookUrl});
   if (styled.length === 1) { m.on("mousemove", onLookMove); m.on("click", onLookClick); m.on("movestart", closePopup); }
-  if (missing.length) alert("roadstyle: the layer has no column " + missing.join(", ") + ": the look shows what it can" +
-                            (missing.includes("fill_level") ? " (every road at one drawing position)." : "."));
+  if (missing.length) notify("The layer has no column " + missing.join(", ") + ": the look shows what it can" +
+                             (missing.includes("fill_level") ? " (every road at one drawing position)." : "."), "warn");
 }
 
 // GeoLibre's own line of the data layer, unseen (a transparent colour), set through GeoLibre's style so that GeoLibre keeps it: it
@@ -296,18 +374,20 @@ function hideOwn(layerId, colors = null) {
   console.info("roadstyle: GeoLibre's own drawing of layer", layerId, "->", colors ? "its colours" : "transparent", JSON.stringify(res));
 }
 
-function pickLayer() {
+// the dialog of "Style a layer with roadstyle": which data layer, and optionally another look (empty: the plugin's default look)
+async function askStyleLayer() {
   const layers = (app.listLayers ? app.listLayers() : []).filter((l) => l.type !== "raster");
-  if (!layers.length) { alert("roadstyle: add a data layer first (for example the edges of a duckOSM file)."); return null; }
-  const choice = layers.length === 1 ? "1" : prompt("Which layer?\n" + layers.map((l, i) => (i + 1) + ": " + l.name).join("\n"), "1");
-  const l = layers[Number(choice) - 1];
-  return l ? l.id : null;
+  if (!layers.length) return notify("Add a data layer first (for example the edges of a duckOSM file).", "warn");
+  const r = await ask("Style a layer with roadstyle", [
+    {name: "layer", label: "Layer", type: "select", options: layers.map((l) => ({value: l.id, label: l.name || l.id}))},
+    {name: "look", label: "Look (optional)", type: "url", placeholder: "the plugin's default look",
+     hint: "The URL of a look from rs.export_look. Leave empty for the default look."}], "Style");
+  if (r) await styleLayer(r.layer, r.look || null);
 }
 
 function unstyleAll() {
   const m = map();
   for (const s of styled.splice(0)) {
-    if (s.own === false) continue;                  // a database's layers: closeDatabases removes them
     if (app.unregisterExternalNativeLayer) app.unregisterExternalNativeLayer("rslook-" + s.layer);
     if (!m) continue;
     s.ids.concat(s.hoverIds || []).forEach((id) => m.getLayer(id) && m.removeLayer(id));
@@ -328,85 +408,101 @@ function removeAll() {
   if (m) { m.off("click", onClick); m.off("mousemove", onMove); }
 }
 
-const fail = (e) => { console.error(e); alert(String(e.message || e)); };
+const fail = (e) => notify(String((e && e.message) || e));
 
 // the plugin's own files (looks, py/worker.js, py/pkgs.zip, popup.css / popup.js): by their URL when GeoLibre gives one (a plugin installed by its
 // manifest URL); a plugin installed from a .zip has none, so the zip's index.js carries them (write_plugin_zip fills ASSETS)
 const ASSETS = /*__ASSETS__*/null;
 const TYPES = {js: "text/javascript", css: "text/css", json: "application/json", zip: "application/zip"};
+const blobs = {};                                  // a file of the .zip as a blob URL, made once
 function asset(f) {
   const url = app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f);
   if (url) return url;
   if (ASSETS && f in ASSETS) {
-    const ext = f.split(".").pop(), body = ext === "zip" ? Uint8Array.from(atob(ASSETS[f]), (c) => c.charCodeAt(0)) : ASSETS[f];   // a zip as base64
-    return URL.createObjectURL(new Blob([body], {type: TYPES[ext]}));
+    if (!blobs[f]) {
+      const ext = f.split(".").pop(), body = ext === "zip" ? Uint8Array.from(atob(ASSETS[f]), (c) => c.charCodeAt(0)) : ASSETS[f];   // a zip as base64
+      blobs[f] = URL.createObjectURL(new Blob([body], {type: TYPES[ext]}));
+    }
+    return blobs[f];
   }
   throw new Error("roadstyle: the plugin has no file " + f + " (install it by its manifest URL, or from the .zip that write_plugin_zip makes)");
 }
-const defaultLook = () => asset("looks/default.json");
 
 // A duckOSM database from your disk: roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a
 // worker, py/worker.js; no server, no export), so it is the map of their pages; the plugin adds the style it makes as rows.
-let pyWorker = null, status = null;
-function say(m, text) {                              // a line on the map while the map is being made
-  console.info("roadstyle:", text);
-  if (!status) {
-    status = document.createElement("div");
-    status.className = "maplibregl-ctrl maplibregl-ctrl-group rs-plugin-status";
-    status.style.cssText = "position:absolute;left:50%;top:10px;transform:translateX(-50%);padding:4px 10px;z-index:5";
-    m.getContainer().appendChild(status);
-  }
-  status.textContent = "roadstyle: " + text;
+let pyWorker = null, pyReady = false, working = null;      // working: {cancel} while a map is being made
+function stopWorker() {
+  if (pyWorker) pyWorker.terminate();
+  pyWorker = null; pyReady = false;
 }
-function unsay() { if (status) status.remove(); status = null; }
-
-function openDatabase() {
-  const input = Object.assign(document.createElement("input"), {type: "file", accept: ".duckdb"});
-  input.onchange = () => (async () => {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    const m = map(), name = file.name.replace(/\.duckdb$/i, "");
-    const first = !pyWorker;
-    if (first)                                       // a worker from a blob: GeoLibre's page cannot start one from another address
-      pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
-    const msg = {db: await file.arrayBuffer(), name};
-    if (first) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();
-    const style = await new Promise((done, fail_) => {
-      pyWorker.onmessage = ({data}) => {
-        if (data.step) say(m, data.step);
-        else if (data.error) fail_(new Error("roadstyle: the map of " + file.name + " failed: " + data.error));
+// one map at a time; Cancel stops the worker (the next map starts a new one)
+function makeStyle(file, box) {
+  return new Promise(async (done, fail_) => {
+    working = {cancel: () => { stopWorker(); fail_(new Error("cancelled")); }};      // Cancel works from the first moment
+    try {
+      const first = !pyWorker;
+      if (first)                                     // a worker from a blob: GeoLibre's page cannot start one from another address
+        pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
+      const w = pyWorker, msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, "")};
+      if (!pyReady) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();     // until the worker said it is ready
+      w.onmessage = ({data}) => {
+        if (data.step) box.say(data.step);
+        else if (data.ready) pyReady = true;
+        else if (data.error) { if (!pyReady) stopWorker(); fail_(new Error("the map of " + file.name + " failed: " + data.error)); }
         else done(data.style);
       };
-      pyWorker.postMessage(msg, [msg.db, ...(msg.pkgs ? [msg.pkgs] : [])]);
-    });
-    say(m, "drawing");
-    await addStyleObject(JSON.parse(style), file.name);
-    unsay();
-  })().catch((e) => { unsay(); fail(e); });
+      w.onerror = (e) => { stopWorker(); fail_(new Error("the Python worker failed: " + (e.message || "it could not start"))); };
+      w.postMessage(msg, [msg.db, ...(msg.pkgs ? [msg.pkgs] : [])]);
+    } catch (e) { stopWorker(); fail_(e); }
+  });
+}
+
+function openDatabase() {
+  if (working) return notify("A map is being made: wait for it, or cancel it.", "warn");
+  const input = Object.assign(document.createElement("input"), {type: "file", accept: ".duckdb"});
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const box = progress("reading " + file.name, () => working && working.cancel());
+    try {
+      const style = await makeStyle(file, box);
+      box.say("drawing");
+      await addStyleObject(JSON.parse(style), file.name, "database");
+    } catch (e) {
+      if (!(e && e.message === "cancelled")) fail(e);
+    } finally {
+      working = null; box.done();
+    }
+  };
   input.click();
 }
 
+async function askAddStyle() {
+  const r = await ask("Add a roadstyle layer", [{name: "url", label: "URL of a roadstyle export (style.json)", type: "url", required: true,
+    placeholder: "https://example.org/export/style.json"}], "Add");
+  if (r) await addStyle(r.url);
+}
+
+function removeEverything() {
+  removeAll();
+  unstyleAll();
+}
 
 export const plugin = {
   id: ID,
   name: "roadstyle",
-  version: "0.11.0",
+  version: VERSION,
   urlParameterNames: ["roadstyle"],
   activate(host) {
     app = host;
     if (app.registerToolbarMenu) {
+      const run = (f) => () => { Promise.resolve().then(f).catch(fail); };
       disposeMenu = app.registerToolbarMenu({
         id: "roadstyle-menu", label: "roadstyle",
-        items: [{id: "db", label: "Open a duckOSM database…", onSelect: () => {
-          try { openDatabase(); } catch (e) { fail(e); }
-        }}, {id: "add", label: "Add a roadstyle layer…", onSelect: () => {
-          const url = prompt("The URL of a roadstyle export (style.json):");
-          if (url) addStyle(url.trim()).catch(fail);
-        }}, {id: "look", label: "Style a layer with roadstyle…", onSelect: () => {
-          const layer = pickLayer(); if (!layer) return;
-          const url = prompt("The URL of a roadstyle look (rs.export_look):", defaultLook());
-          if (url) styleLayer(layer, url.trim()).catch(fail);
-        }}],
+        items: [{id: "db", label: "Open a duckOSM database\u2026", onSelect: run(openDatabase)},
+                {id: "add", label: "Add a roadstyle layer\u2026", onSelect: run(askAddStyle)},
+                {id: "look", label: "Style a layer with roadstyle\u2026", onSelect: run(askStyleLayer)},
+                {id: "remove", label: "Remove roadstyle layers", onSelect: run(removeEverything)}],
       });
     }
   },
@@ -415,20 +511,21 @@ export const plugin = {
     for (const url of params.getAll("roadstyle")) await addStyle(url).catch(fail);
   },
   deactivate() {
+    if (working) working.cancel();
     removeAll();
     unstyleAll();
-    if (pyWorker) pyWorker.terminate();
-    pyWorker = null;
+    stopWorker();
     if (disposeMenu) disposeMenu();
     disposeMenu = null;
   },
   getProjectState() {
-    return {urls: added.map((a) => a.url)};
+    return {urls: added.filter((a) => a.kind === "style").map((a) => a.url)};     // a database's map has no address to open again
   },
   applyProjectState(host, state) {
     app = app || host;
     if (!state || !Array.isArray(state.urls)) return false;
-    state.urls.filter((u) => !added.some((a) => a.url === u)).forEach((u) => addStyle(u).catch(fail));
+    state.urls.filter((u) => typeof u === "string" && /^(https?:|blob:|\/|\.)/.test(u) && !added.some((a) => a.url === u))
+      .forEach((u) => addStyle(u).catch(fail));
   },
 };
 
