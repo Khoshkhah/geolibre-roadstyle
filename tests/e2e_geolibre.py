@@ -114,7 +114,7 @@ def main(db, out=None):
             if (!g) continue; c[g] = c[g] || {layers: 0, visible: 0}; c[g].layers++; if (l.layout.visibility !== 'none') c[g].visible++; } return c; }""")
         print("groups on the map:", groups)
         assert "ocean" not in groups and "3D bridge decks" not in groups, groups                           # out unless chosen in the dialog
-        assert all(groups[g]["visible"] > 0 for g in ("landcover", "water", "buildings", "crossings", "traffic_signals", "roads")), groups
+        assert all(groups[g]["visible"] > 0 for g in ("landcover", "water", "buildings", "crossings", "traffic_signals", "roads", "paved")), groups   # paved: duckOSM 0.6.0
         if "buildings 3D" in groups:                                                                        # mapstyle 0.7.0 and later
             assert groups["buildings 3D"]["visible"] == 1, groups
             n3 = pg.evaluate("""() => { const m = window.__rs.map; m.jumpTo({pitch: 60}); return m.getStyle().layers.filter((l) => l.type === 'fill-extrusion' && (l.metadata || {})['roadstyle:group'] === 'buildings 3D').length; }""")
