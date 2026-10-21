@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.14.2";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.15.0";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -260,14 +260,18 @@ async function addStyle(url) {
 }
 // a roadstyle style (export_style's style.json, or export_inline's style with the data inside) as GeoLibre rows
 // roadstyle's export, adjusted for GeoLibre's map (these two belong in roadstyle's export_style; remove them when it has them)
-// What the plugin leaves out of a style, by the user's choice: the 3D bridge decks (opts.decks), and the base-map layers that make a
-// background (opts.background "none": ocean, land cover, water, waterways, buildings). Sources that no layer uses any more go too.
-const BACKGROUND = ["ocean", "landcover", "water", "waterways", "buildings"];
-function prune(style, opts) {
-  const group = (l) => (l.metadata && l.metadata["roadstyle:group"]) || "roads";
-  const drop = (l) => (opts.decks !== true && (l.type === "fill-extrusion" || l.source === "decks")) ||
-                      (opts.background === "none" && BACKGROUND.includes(group(l)));
-  style.layers = style.layers.filter((l) => !drop(l));
+// The groups of a style (metadata roadstyle:group) and what the plugin does with them. Three parts in GeoLibre's Layers panel: Background (drawn
+// under the roads), Roads, Features (over the roads). Two groups are left out unless the user chooses them in the dialog (opts.ocean, opts.decks):
+// the ocean polygon (the blue sea of the mapstyle page: over GeoLibre's own map it looks like a blue land background) and the 3D bridge decks
+// (roadstyle's export draws them as blocks at 0.7 opacity, and the water shows through). GeoLibre ignores the starting visibility of a row, so a
+// row cannot start switched off: a group that starts off would show at once. Every other group, also those that the mapstyle page starts hidden
+// (crossings, traffic signals), is shown, and the user switches it off in the panel. Sources that no layer uses any more go too.
+const DECKS = "3D bridge decks", OPTIONAL = {ocean: "ocean", [DECKS]: "decks"};
+const groupOf = (l) => (l.metadata && l.metadata["roadstyle:group"]) || "roads";
+function arrange(style, opts) {
+  for (const l of style.layers) if (l.source === "decks") l.metadata = {...(l.metadata || {}), "roadstyle:group": DECKS};   // a group of its own, not part of "roads"
+  style.layers = style.layers.filter((l) => !(groupOf(l) in OPTIONAL) || opts[OPTIONAL[groupOf(l)]] === true);
+  for (const l of style.layers) if (l.layout && l.layout.visibility === "none") l.layout.visibility = "visible";
   const used = new Set(style.layers.map((l) => l.source));
   for (const k of Object.keys(style.sources)) if (!used.has(k)) delete style.sources[k];
   return style;
@@ -309,9 +313,8 @@ let prefixN = 0;                       // a prefix is never used twice, also aft
 async function addStyleObject(style, url, kind = "style", opts = {}) {
   const m = map();
   if (!m) throw new Error("roadstyle: GeoLibre has no MapLibre map (the plugin needs the MapLibre renderer)");
-  prune(style, opts);
+  arrange(style, opts);
   fixExport(style);
-  if (opts.showAll) for (const l of style.layers) if (l.layout && l.layout.visibility === "none") l.layout.visibility = "visible";
   await loadUI(style.metadata && style.metadata["roadstyle:interaction"]);
   const prefix = `rs${prefixN++}-`;
   const spriteImages = style.sprite ? await loadSprite(m, style.sprite, prefix) : [];
@@ -347,23 +350,25 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(layerIds[i]);
   });
-  const rowIds = [], featureRows = [], underRows = [], typeRows = [], groupIds = [];
+  const roadsRows = [], featureRows = [], backgroundRows = [], typeRows = [], groupIds = [];
+  const roadGroups = ["roads", DECKS];                  // the roads and their decks: the road types filter both
   const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, imageIds: Object.keys(images).concat(spriteImages), hidden: {classes: new Set(), bridge: false, tunnel: false},
-                 roadLayers: style.layers.map((l, i) => ({id: layerIds[i], filter: l.filter || null, g: (l.metadata && l.metadata["roadstyle:group"]) || "roads"}))
-                   .filter((x) => x.g === "roads")};
+                 roadLayers: style.layers.map((l, i) => ({id: layerIds[i], filter: l.filter || null, g: groupOf(l)}))
+                   .filter((x) => roadGroups.includes(x.g))};
   if (app.registerExternalNativeLayer) {
     const roadsAt = [...groups.keys()].indexOf("roads");
     [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
       const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
       app.registerExternalNativeLayer({
-        id, name: g === "roads" ? (style.name || "roads") + " · roads" : g, type: "vector", nativeLayerIds: ids, sourceIds,
+        id, name: g, type: "vector", nativeLayerIds: ids, sourceIds,
         opacity: 1, style: {}, metadata: {url, group: g}, visible,
         paintMode: "plugin",          // roadstyle paints these layers: GeoLibre's style editors do not apply
         paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))},
       });
-      // A GeoLibre folder is drawn at the place of its first row. So the layers that the style draws under the roads (railways,
-      // parking) go to one folder, and the features over the roads (crossings, traffic signals, stations) to another.
-      (g === "roads" ? rowIds : i < roadsAt ? underRows : featureRows).push(id);
+      // A GeoLibre folder is drawn at the place of its first row. So the layers that the style draws under the roads (ocean, land
+      // cover, water, buildings, railways, parking) go to the folder Background, and the layers over the roads (crossings, signals,
+      // stations, 3D buildings) to the folder Features. The decks are drawn over the roads, but they are part of the Roads folder.
+      (roadGroups.includes(g) ? roadsRows : i < roadsAt ? backgroundRows : featureRows).push(id);
     });
     // the road types: a row for each class, bridges and tunnels (a row with no layer of its own: its check box sets the filters)
     const types = roadTypes(style);
@@ -389,21 +394,24 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
     if (types.tunnel) typeRow("tunnel", "tunnels", (h) => { entry.hidden.tunnel = h; });
     if (types.bridge) typeRow("bridge", "bridges", (h) => { entry.hidden.bridge = h; });
     if (app.addLayerGroup) {
-      const top = app.addLayerGroup((style.name || "roads") + " (roadstyle)", rowIds);
-      groupIds.push(top);
-      const nest = (name, rows) => {
-        if (!rows.length) return;
-        const g = app.addLayerGroup(name, rows);
+      const name = style.name || "map", folder = (title, rows) => {
+        if (!rows.length) return null;
+        const g = app.addLayerGroup(`${title} (${name})`, rows);
         groupIds.push(g);
-        if (app.moveLayerGroupToGroup && top && g) app.moveLayerGroupToGroup(g, top);
+        return g;
       };
-      nest("road types", typeRows);
-      nest("under the roads", underRows);
-      nest("features", featureRows);
+      folder("Background", backgroundRows);
+      const roadsFolder = folder("Roads", roadsRows);
+      folder("Features", featureRows);
+      if (typeRows.length) {                           // the road types: a folder in the Roads folder
+        const g = app.addLayerGroup("by type", typeRows);
+        groupIds.push(g);
+        if (app.moveLayerGroupToGroup && roadsFolder && g) app.moveLayerGroupToGroup(g, roadsFolder);
+      }
     }
   }
   if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); }   // the popup stays at its road while the map moves, as on the page
-  entry.rowIds = rowIds.concat(typeRows, underRows, featureRows);
+  entry.rowIds = roadsRows.concat(typeRows, backgroundRows, featureRows);
   added.push(entry);
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
   const small = style.layers.filter((l) => l.minzoom >= 16 && m.getLayoutProperty(prefix + l.id, "visibility") !== "none");
@@ -572,12 +580,11 @@ const dbFields = (file, o) => [
   pick("mode", "Roads in front", [["all", "All modes"], ["driving", "Driving"], ["walking", "Walking"], ["cycling", "Cycling"]], o.mode),
   pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"]], o.theme),
   pick("paths", "Footpaths and cycleways", [["google", "Google (calm lines)"], ["osm", "OpenStreetMap (dotted)"], ["komoot", "Komoot (bold)"], ["cyclosm", "CyclOSM (blue)"]], o.paths),
-  pick("features", "Feature layers (crossings, traffic signals, …)", [["all", "Show all of them (from zoom 16)"], ["page", "As the mapstyle page opens"]], o.features),
-  pick("background", "Background (ocean, land cover, water, buildings)", [["none", "None: roads and features over GeoLibre's map"], ["page", "As the mapstyle page"]], o.background),
+  pick("ocean", "Ocean polygon (the blue sea)", [["off", "Off: GeoLibre's own map shows the sea"], ["on", "On, as the mapstyle page"]], o.ocean),
   pick("decks", "3D bridge decks", [["off", "Off"], ["on", "On"]], o.decks),
 ];
 let lastDb = null;                                   // {file, opts}: "Redraw with other colours" makes the same file again
-const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", features: "all", background: "none", decks: "off"};     // all: the crossings and signals show from their zoom; the page hides them
+const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", ocean: "off", decks: "off"};     // all: the crossings and signals show from their zoom; the page hides them
 
 async function runDatabase(file, opts) {
   const box = progress("reading " + file.name, () => working && working.cancel());
@@ -585,7 +592,7 @@ async function runDatabase(file, opts) {
     const style = await makeStyle(file, box, opts);
     box.say("drawing");
     removeKind("database");                          // the map of the last time goes when the new one is ready
-    await addStyleObject(JSON.parse(style), file.name, "database", {showAll: opts.features === "all", background: opts.background, decks: opts.decks === "on"});
+    await addStyleObject(JSON.parse(style), file.name, "database", {ocean: opts.ocean === "on", decks: opts.decks === "on"});
     lastDb = {file, opts};
   } catch (e) {
     if (!(e && e.message === "cancelled")) fail(e);

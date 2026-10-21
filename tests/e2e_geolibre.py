@@ -82,7 +82,7 @@ def main(db, out=None):
         pg.get_by_text("Open a duckOSM database", exact=False).first.click()
         pg.wait_for_selector("[role=dialog] input[type=file]")
         pg.set_input_files("[role=dialog] input[type=file]", str(db))
-        assert pg.eval_on_selector("[role=dialog] select >> nth=3", "(s) => s.value") == "all"       # the default: show all feature layers
+        assert pg.eval_on_selector_all("[role=dialog] select", "(ss) => ss.map((s) => s.value)")[3:] == ["off", "off"]      # the defaults: no ocean polygon, no 3D bridge decks
         pg.click("[role=dialog] button[type=submit]")
         pg.wait_for_selector(".rs-pl-progress", timeout=20000)
         pg.wait_for_selector(".rs-pl-progress", state="detached", timeout=400000)
@@ -110,6 +110,20 @@ def main(db, out=None):
         order = pg.evaluate("""() => { const L = window.__rs.map.getStyle().layers, g = (l) => l.metadata && l.metadata['roadstyle:group'];
             const at = (name, first) => { const k = L.map((l, i) => g(l) === name ? i : -1).filter((i) => i >= 0); return first ? Math.min(...k) : Math.max(...k); };
             return {roadsLast: at('roads', false), crossingsFirst: at('crossings', true), signalsFirst: at('traffic_signals', true), railwaysLast: at('railways', false), roadsFirst: at('roads', true)}; }""")
+        groups = pg.evaluate("""() => { const c = {}; for (const l of window.__rs.map.getStyle().layers) { const g = l.metadata && l.metadata['roadstyle:group'];
+            if (!g) continue; c[g] = c[g] || {layers: 0, visible: 0}; c[g].layers++; if (l.layout.visibility !== 'none') c[g].visible++; } return c; }""")
+        print("groups on the map:", groups)
+        assert "ocean" not in groups and "3D bridge decks" not in groups, groups                           # out unless chosen in the dialog
+        assert all(groups[g]["visible"] > 0 for g in ("landcover", "water", "buildings", "crossings", "traffic_signals", "roads")), groups
+        if "buildings 3D" in groups:                                                                        # mapstyle 0.7.0 and later
+            assert groups["buildings 3D"]["visible"] == 1, groups
+            n3 = pg.evaluate("""() => { const m = window.__rs.map; m.jumpTo({pitch: 60}); return m.getStyle().layers.filter((l) => l.type === 'fill-extrusion' && (l.metadata || {})['roadstyle:group'] === 'buildings 3D').length; }""")
+            assert n3 == 1, n3
+        for title in ("Background (monaco)", "Roads (monaco)", "Features (monaco)", "by type"):
+            assert pg.get_by_text(title, exact=True).count() > 0, title + " is not in the Layers panel"
+        ys = {t: pg.get_by_text(t, exact=True).first.bounding_box()["y"] for t in ("Features (monaco)", "Roads (monaco)", "Background (monaco)")}
+        print("folders in the panel, from the top:", sorted(ys, key=ys.get))
+        assert ys["Roads (monaco)"] < ys["Features (monaco)"] < ys["Background (monaco)"], ys                  # the panel: Roads (it holds the type rows), Features, Background
         print("draw order:", order)
         assert order["roadsLast"] < order["crossingsFirst"] and order["roadsLast"] < order["signalsFirst"], order      # features over the roads
         assert order["railwaysLast"] < order["roadsFirst"], order                                                      # railways and parking under them
@@ -136,6 +150,12 @@ def main(db, out=None):
         assert n > 1000, "the road type row did not change the map"
         assert any("road type residential hidden" in t for t in said), said[-5:]
         assert not errors, errors
+        if out and "buildings 3D" in groups:                                                                   # a picture of the 3D buildings
+            pg.evaluate("() => window.__rs.map.jumpTo({center: [7.4255, 43.7385], zoom: 17.3, pitch: 60, bearing: 20})")
+            pg.wait_for_timeout(8000)
+            Path(out).mkdir(parents=True, exist_ok=True)
+            pg.screenshot(path=str(Path(out) / "3d_buildings.png"))
+
         browser.close()
         print("ok")
 

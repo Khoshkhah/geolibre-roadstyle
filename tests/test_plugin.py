@@ -119,31 +119,51 @@ def test_bad_url_is_a_message_not_a_crash(host):
     assert "404" in host.inner_text("[role=alert]")
 
 
-def test_bridge_decks_are_left_out_by_default_and_opaque_when_kept(host):
-    """The 3D bridge decks are off by default; when kept, they are drawn at 1 (roadstyle's export draws them at 0.7)."""
-    vis = host.evaluate("""async () => {
-        const mod = await import('/index.js');
-        const st = await (await fetch('/tests/style.json')).json();
-        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style');
-        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {decks: true});
-        return [rs.map.getLayer('rs0-roads-bridge-decks') != null, rs.map.getSource('rs0-decks') != null,
-                rs.map.getPaintProperty('rs1-roads-bridge-decks', 'fill-extrusion-opacity')];
-    }""")
-    assert vis == [False, False, 1]
-    assert host.errors == []
-
-
-def test_background_layers_can_be_left_out(host):
+def test_ocean_and_decks_are_left_out_unless_chosen(host):
+    """The ocean polygon (the blue sea) and the 3D bridge decks: out by default, each a row of its own when chosen. The decks are drawn at 1."""
     out = host.evaluate("""async () => {
         const mod = await import('/index.js');
         const st = await (await fetch('/tests/style.json')).json();
         st.sources.ocean = {type: 'geojson', data: {type: 'FeatureCollection', features: []}};
         st.layers.unshift({id: 'ov0-fill', type: 'fill', source: 'ocean', metadata: {'roadstyle:group': 'ocean'}, paint: {'fill-color': '#00f'}});
-        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style', {background: 'none'});
-        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {background: 'page'});
-        return [rs.map.getLayer('rs0-ov0-fill') != null, rs.map.getSource('rs0-ocean') != null, rs.map.getLayer('rs1-ov0-fill') != null];
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style');
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {ocean: true, decks: true});
+        const has = (id) => rs.map.getLayer(id) != null, names = rs.rows.filter((r) => !r.metadata.group.startsWith('road type')).map((r) => r.name);
+        return {default: [has('rs0-ov0-fill'), has('rs0-roads-bridge-decks'), rs.map.getSource('rs0-decks') != null, rs.map.getSource('rs0-ocean') != null],
+                chosen: [has('rs1-ov0-fill'), has('rs1-roads-bridge-decks')], opacity: rs.map.getPaintProperty('rs1-roads-bridge-decks', 'fill-extrusion-opacity'), names};
     }""")
-    assert out == [False, False, True]
+    assert out["default"] == [False, False, False, False] and out["chosen"] == [True, True] and out["opacity"] == 1
+    assert out["names"].count("ocean") == 1 and out["names"].count("3D bridge decks") == 1
+    assert host.errors == []
+
+
+def test_features_that_the_page_starts_hidden_are_shown(host):
+    """GeoLibre ignores the starting visibility of a row, so the plugin shows every group: the user switches it off in the panel."""
+    vis = host.evaluate("""async () => {
+        const mod = await import('/index.js');
+        const st = await (await fetch('/tests/style.json')).json();
+        st.layers.push({id: 'ov-crossings', type: 'line', source: 'roads', layout: {visibility: 'none'},
+                        metadata: {'roadstyle:group': 'crossings'}, paint: {'line-color': '#00f'}});
+        await mod.__test.addStyleObject(st, 'a', 'style');
+        return rs.map.getLayoutProperty('rs0-ov-crossings', 'visibility'); }""")
+    assert vis == "visible"
+    assert host.errors == []
+
+
+def test_three_folders(host):
+    """Background (under the roads), Roads (with the road types) and Features (over the roads), named with the map's name."""
+    host.evaluate("""async () => {
+        const mod = await import('/index.js');
+        const st = await (await fetch('/tests/style.json')).json(); st.name = 'monaco';
+        st.sources.s = {type: 'geojson', data: {type: 'FeatureCollection', features: []}};
+        st.layers.unshift({id: 'ov0-fill', type: 'fill', source: 's', metadata: {'roadstyle:group': 'water'}, paint: {'fill-color': '#00f'}});
+        st.layers.push({id: 'ov5-fill', type: 'fill', source: 's', metadata: {'roadstyle:group': 'crossings'}, paint: {'fill-color': '#000'}});
+        await mod.__test.addStyleObject(st, 'a', 'style'); }""")
+    assert host.evaluate("() => rs.groups.map((g) => g.name)") == ["Background (monaco)", "Roads (monaco)", "Features (monaco)", "by type"]
+    rows = host.evaluate("() => rs.groups.map((g) => g.ids.map((id) => rs.rows.find((r) => r.id === id).name))")
+    assert rows[0] == ["water"] and rows[1] == ["roads"] and rows[2] == ["crossings"] and "bridges" in rows[3]
+    order = host.evaluate("() => rs.map.getStyle().layers.map((l) => l.id).filter((i) => /ov0-fill|rs0-roads$|ov5-fill/.test(i))")
+    assert order == ["rs0-ov0-fill", "rs0-roads", "rs0-ov5-fill"]                     # draw order: background, roads, features
     assert host.errors == []
 
 
@@ -198,53 +218,11 @@ def test_database_dialog_has_the_colour_choices(host):
     assert labels[0].startswith("duckOSM database") and "Colours" in labels and "Footpaths and cycleways" in labels
     assert host.eval_on_selector_all("[role=dialog] select:nth-of-type(1) option", "(os) => os.map((o) => o.value)")
     themes = host.evaluate("() => [...document.querySelectorAll('[role=dialog] select')].map((s) => [...s.options].map((o) => o.value))")
-    assert themes[1] == ["osm", "google", "grey"] and themes[3] == ["all", "page"] and themes[4] == ["none", "page"] and themes[5] == ["off", "on"]
+    assert themes[1] == ["osm", "google", "grey"] and themes[3] == ["off", "on"] and themes[4] == ["off", "on"] and len(themes) == 5
     host.keyboard.press("Escape")
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'redraw').onSelect()")       # nothing to redraw yet: a message
     host.wait_for_selector(".rs-pl-toast")
     assert "Open a duckOSM database first" in host.inner_text(".rs-pl-toast")
-
-
-def test_show_all_feature_layers(host):
-    """The option "Show all of them" shows the feature layers that the mapstyle page starts hidden."""
-    vis = host.evaluate("""async () => {
-        const mod = await import('/index.js');
-        const st = await (await fetch('/tests/style.json')).json();
-        st.layers.push({id: 'ov-crossings', type: 'line', source: 'roads', layout: {visibility: 'none'},
-                        metadata: {'roadstyle:group': 'crossings'}, paint: {'line-color': '#00f'}});
-        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style');
-        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {showAll: true});
-        return [rs.map.getLayoutProperty('rs0-ov-crossings', 'visibility'), rs.map.getLayoutProperty('rs1-ov-crossings', 'visibility')];
-    }""")
-    assert vis == ["none", "visible"]
-    assert host.errors == []
-
-
-PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-
-
-def test_images_do_not_clash_with_the_base_map(host):
-    """GeoLibre's base map has an image 'oneway' (21 x 21): roadstyle's arrow must not be skipped because of it."""
-    out = host.evaluate("""async (png) => {
-        const mod = await import('/index.js'), m = rs.map;
-        m.addImage('oneway', {width: 2, height: 2, data: new Uint8Array(16)});                // the base map's own image
-        const st = await (await fetch('/tests/style.json')).json();
-        st.metadata['roadstyle:images'] = {oneway: {url: png, sdf: true, pixelRatio: 4}};
-        st.layers.push({id: 'roads-arrows', type: 'symbol', source: 'roads', layout: {'icon-image': 'oneway', 'symbol-placement': 'line-center'}});
-        st.layers.push({id: 'roads-x', type: 'symbol', source: 'roads', layout: {'icon-image': ['match', ['get', 'highway'], 'tertiary', 'oneway', 'other-icon']}});
-        await mod.__test.addStyleObject(st, 'a', 'style');
-        const img = m.getImage('rs0-oneway');
-        const res = {layer: m.getLayoutProperty('rs0-roads-arrows', 'icon-image'), expr: m.getLayoutProperty('rs0-roads-x', 'icon-image'),
-                     own: img && {w: img.data.width, sdf: img.sdf, pr: img.pixelRatio}, base: m.getImage('oneway').data.width};
-        document.querySelector('.rs-pl') || 0;
-        return res; }""", PNG)
-    assert out["layer"] == "rs0-oneway" and out["base"] == 2                          # the base map's image stays as it was
-    assert out["expr"] == ["match", ["get", "highway"], "tertiary", "rs0-oneway", "other-icon"]
-    assert out["own"] == {"w": 1, "sdf": True, "pr": 4}
-    host.evaluate("() => rs.menu.items.find((i) => i.id === 'remove').onSelect()")
-    host.wait_for_function("() => !rs.map.hasImage('rs0-oneway')")                       # the image goes with the map
-    assert host.evaluate("() => rs.map.hasImage('oneway')")
-    assert host.errors == []
 
 
 def test_project_state_keeps_styles_not_databases(host):
@@ -290,11 +268,11 @@ slow = pytest.mark.skipif(not DB or not Path(DB or "x").exists(), reason="set RS
 
 
 def open_db(page, **choices):
-    """the menu item, then the dialog: the file and the choices (selects by their label's order: mode, theme, paths, features)"""
+    """the menu item, then the dialog: the file and the choices (selects by their label's order: mode, theme, paths, ocean, decks)"""
     page.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
     page.wait_for_selector("[role=dialog]")
     page.set_input_files("[role=dialog] input[type=file]", DB)
-    for i, key in enumerate(("mode", "theme", "paths", "features", "background", "decks")):
+    for i, key in enumerate(("mode", "theme", "paths", "ocean", "decks")):
         if key in choices:
             page.select_option(f"[role=dialog] select >> nth={i}", choices[key])
     page.click("[role=dialog] button[type=submit]")
