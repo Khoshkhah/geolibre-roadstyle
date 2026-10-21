@@ -9,9 +9,10 @@ own base map, with roadstyle's look and the roads' data. One plain ES module, no
   roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`;
   `mapstyle.export.export_inline`), so it is the map of mapstyle's page: one row per layer, the base map's layers in a
   "features" folder. No server and no export. The first time it loads Python and the packages (about 30 s).
-- **Install from a file:** `python -c "import roadstyle.export as e; e.write_plugin_files('geolibre-plugin'); e.write_plugin_zip('geolibre-plugin', 'out/roadstyle-geolibre-plugin.zip')"`
-  makes the plugin's files (the look, the popup files, `py/pkgs.zip` with roadstyle's and mapstyle's Python) and one `.zip`
-  for GeoLibre › Settings › Manage Plugins › Settings › Install from file.
+- **Install from a file:** `pip install roadstyle mapstyle`, then `python build.py`. It makes the plugin's generated files (the
+  look, the popup files, `py/pkgs.zip` with roadstyle's and mapstyle's Python) and `out/roadstyle-geolibre.zip` for
+  GeoLibre › Settings › Manage Plugins › Settings › Install from file. The `py/pkgs.zip` in this repo is from the time of
+  plugin 0.11.0 (an old roadstyle): run `python build.py --files` to refresh it, and increase `version` in `plugin.json`.
 - **Style a data layer:** the menu **roadstyle** › Style a layer with roadstyle puts a roadstyle look (`rs.export_look`;
   the default is `looks/default.json`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or
   GeoParquet layer. GeoLibre's own line of the layer becomes transparent; Identify still shows the data.
@@ -28,4 +29,4 @@ own base map, with roadstyle's look and the roads' data. One plain ES module, no
 - **What it does not do yet:** roadstyle's page arrows (one per one-way street; the export has fixed rules instead), the
   colour options, `rsColor` and the other `rs*` functions.
 
-Design: `docs/design/style_export.md`, version 2.
+Design: `docs/design/style_export.md` in the [roadstyle repo](https://github.com/Khoshkhah/roadstyle), version 2. This repo was the `geolibre-plugin/` folder of roadstyle's `geolibre` branch; its history is kept.
