@@ -34,9 +34,9 @@ Increase `version` in `plugin.json` and in `index.js` (`VERSION`) with each chan
 
 ## What the plugin needs
 
-- **mapstyle with `mapstyle.export`.** "Open a duckOSM database" calls `mapstyle.export.export_inline`. mapstyle 0.5.1 on PyPI
-  does not have this module yet, so `py/pkgs.zip` in this repo holds a copy from a mapstyle branch. `python build.py --files` with
-  the released mapstyle makes a `pkgs.zip` without it, and then this menu item fails.
+- **mapstyle 0.6.0 or later, and roadstyle 0.24.0 or later.** "Open a duckOSM database" calls `mapstyle.export.export_inline`.
+  `py/pkgs.zip` in this repo holds roadstyle 0.24.0 and mapstyle 0.6.0. To refresh it, install newer releases and run
+  `python build.py --files`, then increase the version.
 - **Network.** The worker loads Pyodide from `cdn.jsdelivr.net` and two small packages from PyPI (`folium`, `branca`).
 - **Memory.** The `.duckdb` file is read into memory twice (the browser and the worker). A large file needs a large amount of memory.
 
