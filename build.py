@@ -1,6 +1,6 @@
 """Make the generated files of the plugin, and the .zip for GeoLibre's "Install from file".
 
-    python build.py            # the files of this folder, then out/roadstyle-geolibre.zip
+    python build.py            # the files of this folder, then dist/roadstyle-geolibre.zip
     python build.py --files    # only the files (the look, popup.css, popup.js, py/pkgs.zip)
     python build.py --zip      # only the .zip
 
@@ -77,4 +77,4 @@ if __name__ == "__main__":
     if not a.zip:
         write_plugin_files()
     if not a.files:
-        print(write_plugin_zip(HERE, HERE / "out" / "roadstyle-geolibre.zip"))
+        print(write_plugin_zip(HERE, HERE / "dist" / "roadstyle-geolibre.zip"))

@@ -19,8 +19,8 @@ lights it. The popup shows every name and value as text.
 
 ## Install
 
-**Download the plugin:** [`roadstyle-geolibre.zip`](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip)
-(from the [Releases](https://github.com/Khoshkhah/geolibre-roadstyle/releases) page). In GeoLibre: Settings › Manage Plugins ›
+**Download the plugin:** [`dist/roadstyle-geolibre.zip`](dist/roadstyle-geolibre.zip) in this repo (open it, then click the download
+button). The same file is on the [Releases](https://github.com/Khoshkhah/geolibre-roadstyle/releases) page. In GeoLibre: Settings › Manage Plugins ›
 Settings › Install from file, and choose the `.zip`. Then use the menu **roadstyle**.
 
 Two other ways:
@@ -29,7 +29,7 @@ Two other ways:
    serve `.js` files as `text/javascript`. GitHub Pages does. `raw.githubusercontent.com` does not, so GeoLibre cannot load the
    plugin from there.
 2. **Build the file yourself.** `pip install roadstyle mapstyle`, then `python build.py`. It makes the generated files (the look, the popup
-   files, `py/pkgs.zip` with roadstyle's and mapstyle's Python) and `out/roadstyle-geolibre.zip` for GeoLibre › Settings ›
+   files, `py/pkgs.zip` with roadstyle's and mapstyle's Python) and `dist/roadstyle-geolibre.zip` for GeoLibre › Settings ›
    Manage Plugins › Settings › Install from file.
 
 **Not in the menu?** Plugins › Installed › roadstyle makes the plugin active.
