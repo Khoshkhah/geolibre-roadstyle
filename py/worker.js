@@ -1,7 +1,7 @@
 // roadstyle and mapstyle in the browser (Pyodide), for the roadstyle GeoLibre plugin (roadstyle › Open a duckOSM database): the map
 // of a duckOSM .duckdb made by their own Python code (mapstyle.export.export_inline), so it is the page's map. A module worker: a
 // large WebAssembly file (DuckDB) cannot be compiled on the page's main thread, and GeoLibre stays responsive.
-// Messages in: {db: ArrayBuffer, name, pkgs: ArrayBuffer (roadstyle + mapstyle, until {ready} came back)}; out: {step}, {ready}, {style: JSON}, {error}.
+// Messages in: {db: ArrayBuffer, name, opts: {mode, theme, paths}, pkgs: ArrayBuffer (roadstyle + mapstyle, until {ready} came back)}; out: {step}, {ready}, {style: JSON}, {error}.
 
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";   // Python 3.14, DuckDB 1.5.1 (checked 2026-10-20)
 const PACKAGES = ["numpy", "pandas", "shapely", "pyproj", "geopandas", "pyyaml", "duckdb", "scipy", "jinja2", "requests", "xyzservices", "pillow"];
@@ -30,11 +30,13 @@ onmessage = async ({data}) => {
     postMessage({step: "making the map of " + data.name});
     py.FS.writeFile("/home/pyodide/db.duckdb", new Uint8Array(data.db));
     py.globals.set("rs_name", data.name);
+    py.globals.set("rs_opts", JSON.stringify(data.opts || {}));
     let style;
     try {
       style = await py.runPythonAsync(`import json
 from mapstyle.export import export_inline
-json.dumps(export_inline("/home/pyodide/db.duckdb", name=rs_name), separators=(",", ":"))`);
+opts = {k: v for k, v in json.loads(rs_opts).items() if k in ("mode", "theme", "paths") and isinstance(v, str)}
+json.dumps(export_inline("/home/pyodide/db.duckdb", name=rs_name, **opts), separators=(",", ":"))`);
     } finally {
       py.FS.unlink("/home/pyodide/db.duckdb");     // also after an error: the database is not kept in the worker's memory
     }

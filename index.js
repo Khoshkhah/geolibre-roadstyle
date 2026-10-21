@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.13.0";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.14.0";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -48,13 +48,14 @@ function ask(title, fields, ok = "OK") {
     form.setAttribute("role", "dialog"); form.setAttribute("aria-modal", "true"); form.setAttribute("aria-label", title);
     form.innerHTML = `<h3>${esc(title)}</h3>` + fields.map((f, i) => `<label for="rs-pl-${i}">${esc(f.label)}</label>` +
       (f.type === "select"
-        ? `<select id="rs-pl-${i}">${f.options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")}</select>`
-        : `<input id="rs-pl-${i}" type="${f.type || "text"}" placeholder="${esc(f.placeholder || "")}"${f.required ? " required" : ""}>`) +
+        ? `<select id="rs-pl-${i}">${f.options.map((o) => `<option value="${esc(o.value)}"${o.value === f.value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`
+        : `<input id="rs-pl-${i}" type="${f.type || "text"}" placeholder="${esc(f.placeholder || "")}"${f.accept ? ` accept="${esc(f.accept)}"` : ""}${f.required ? " required" : ""}>`) +
       (f.hint ? `<p class="rs-pl-hint">${esc(f.hint)}</p>` : "")).join("") +
       `<div class="rs-pl-btns"><button type="button" data-cancel>Cancel</button><button type="submit">${esc(ok)}</button></div>`;
     const close = (v) => { document.removeEventListener("keydown", onKey, true); ov.remove(); if (back && back.focus) back.focus(); done(v); };
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(null); } };
-    form.onsubmit = (e) => { e.preventDefault(); close(Object.fromEntries(fields.map((f, i) => [f.name, form.querySelector("#rs-pl-" + i).value.trim()]))); };
+    const val = (f, i) => { const el = form.querySelector("#rs-pl-" + i); return f.type === "file" ? (el.files[0] || null) : el.value.trim(); };
+    form.onsubmit = (e) => { e.preventDefault(); close(Object.fromEntries(fields.map((f, i) => [f.name, val(f, i)]))); };
     form.querySelector("[data-cancel]").onclick = () => close(null);
     ov.onmousedown = (e) => { if (e.target === ov) close(null); };
     document.addEventListener("keydown", onKey, true);
@@ -257,11 +258,43 @@ async function addStyle(url) {
   return addStyleObject(await r.json(), url, "style");
 }
 // a roadstyle style (export_style's style.json, or export_inline's style with the data inside) as GeoLibre rows
-async function addStyleObject(style, url, kind = "style") {
+// roadstyle's export, adjusted for GeoLibre's map (these two belong in roadstyle's export_style; remove them when it has them)
+function fixExport(style) {
+  for (const l of style.layers)        // the 3D bridge decks are drawn at 0.7: the water shows through and the bridges look transparent
+    if (l.type === "fill-extrusion" && l.paint) l.paint["fill-extrusion-opacity"] = 1;
+  return style;
+}
+
+// ---- road types: one GeoLibre row for each highway class of the roads, and for bridges and tunnels. A row's check box hides or shows
+// those roads in every road layer with a filter, so the layers stay one set (a class is not a copy of them). A row has a transparent
+// layer of its own, because GeoLibre calls a row's bridge (setVisibility) only for a row with a MapLibre layer id.
+const CLASS_ORDER = ["motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link",
+  "tertiary", "tertiary_link", "unclassified", "residential", "living_street", "service", "pedestrian", "footway", "cycleway", "path",
+  "steps", "track", "corridor", "platform", "ferry"];
+function roadTypes(style) {            // the classes in the roads' own data; a style with tiles has none inline: the usual classes
+  const src = style.sources.roads, feats = src && src.data && src.data.features;
+  if (!feats) return {classes: CLASS_ORDER.slice(), bridge: true, tunnel: true};
+  const have = new Set(feats.map((f) => f.properties && f.properties.highway).filter((c) => typeof c === "string" && c));
+  const classes = [...have].sort((a, b) => (CLASS_ORDER.indexOf(a) < 0 ? 99 : CLASS_ORDER.indexOf(a)) - (CLASS_ORDER.indexOf(b) < 0 ? 99 : CLASS_ORDER.indexOf(b)) || a.localeCompare(b));
+  return {classes, bridge: feats.some((f) => f.properties && f.properties.__rs_bridge), tunnel: feats.some((f) => f.properties && f.properties.__rs_tunnel)};
+}
+function setRoadFilters(m, a) {
+  const h = a.hidden, conds = [];
+  if (h.classes.size) conds.push(["!", ["in", ["coalesce", ["get", "highway"], ""], ["literal", [...h.classes]]]]);
+  if (h.bridge) conds.push(["!", ["to-boolean", ["get", "__rs_bridge"]]]);
+  if (h.tunnel) conds.push(["!", ["to-boolean", ["get", "__rs_tunnel"]]]);
+  for (const {id, filter} of a.roadLayers)
+    if (m.getLayer(id)) m.setFilter(id, conds.length ? ["all", ...(filter ? [filter] : []), ...conds] : (filter || null));
+}
+
+let prefixN = 0;                       // a prefix is never used twice, also after a map was removed
+async function addStyleObject(style, url, kind = "style", opts = {}) {
   const m = map();
   if (!m) throw new Error("roadstyle: GeoLibre has no MapLibre map (the plugin needs the MapLibre renderer)");
+  fixExport(style);
+  if (opts.showAll) for (const l of style.layers) if (l.layout && l.layout.visibility === "none") l.layout.visibility = "visible";
   await loadUI(style.metadata && style.metadata["roadstyle:interaction"]);
-  const prefix = `rs${added.length}-`;
+  const prefix = `rs${prefixN++}-`;
   if (style.sprite) await loadSprite(m, style.sprite, prefix);
   // the style's own images (roadstyle's arrow, mapstyle's icons and textures: roadstyle:images), added under their names
   const images = (style.metadata && style.metadata["roadstyle:images"]) || {};
@@ -287,7 +320,10 @@ async function addStyleObject(style, url, kind = "style") {
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(layerIds[i]);
   });
-  const rowIds = [], featureRows = [];
+  const rowIds = [], featureRows = [], typeRows = [], groupIds = [];
+  const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, hidden: {classes: new Set(), bridge: false, tunnel: false},
+                 roadLayers: style.layers.map((l, i) => ({id: layerIds[i], filter: l.filter || null, g: (l.metadata && l.metadata["roadstyle:group"]) || "roads"}))
+                   .filter((x) => x.g === "roads")};
   if (app.registerExternalNativeLayer) {
     [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
       const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
@@ -299,16 +335,45 @@ async function addStyleObject(style, url, kind = "style") {
       });
       (g === "roads" ? rowIds : featureRows).push(id);
     });
+    // the road types: a row for each class, bridges and tunnels (a row with no layer of its own: its check box sets the filters)
+    const types = roadTypes(style);
+    const typeRow = (key, name, hide) => {
+      const id = prefix + "type-" + key;
+      let shown = true;                                  // GeoLibre calls the bridge once at the start: nothing to do then
+      // GeoLibre treats a row as a plugin layer only when it has a MapLibre layer id: a transparent background layer is the row's own
+      m.addLayer({id, type: "background", paint: {"background-opacity": 0}});
+      layerIds.push(id);
+      app.registerExternalNativeLayer({
+        id, name, type: "vector", nativeLayerIds: [id], sourceIds: [], opacity: 1, style: {}, metadata: {url, group: "road type"}, visible: true,
+        paintMode: "plugin",
+        paintBridge: {setVisibility: (v) => {
+          if (v === shown) return;
+          shown = v; hide(!v); setRoadFilters(m, entry);
+          console.info("roadstyle: road type", name, v ? "shown" : "hidden");
+        }},
+      });
+      typeRows.push(id);
+    };
+    // GeoLibre lists the last row on top: bridges and tunnels, then the classes from motorway to path, so register them the other way round
+    for (const c of types.classes.slice().reverse()) typeRow("c-" + c, c, (h) => entry.hidden.classes[h ? "add" : "delete"](c));
+    if (types.tunnel) typeRow("tunnel", "tunnels", (h) => { entry.hidden.tunnel = h; });
+    if (types.bridge) typeRow("bridge", "bridges", (h) => { entry.hidden.bridge = h; });
     if (app.addLayerGroup) {
       const top = app.addLayerGroup((style.name || "roads") + " (roadstyle)", rowIds);
-      if (featureRows.length) {
-        const fg = app.addLayerGroup("features", featureRows);
-        if (app.moveLayerGroupToGroup && top && fg) app.moveLayerGroupToGroup(fg, top);
-      }
+      groupIds.push(top);
+      const nest = (name, rows) => {
+        if (!rows.length) return;
+        const g = app.addLayerGroup(name, rows);
+        groupIds.push(g);
+        if (app.moveLayerGroupToGroup && top && g) app.moveLayerGroupToGroup(g, top);
+      };
+      nest("road types", typeRows);
+      nest("features", featureRows);
     }
   }
   if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); }   // the popup stays at its road while the map moves, as on the page
-  added.push({url, kind, prefix, layerIds, sourceIds, rowIds: rowIds.concat(featureRows)});
+  entry.rowIds = rowIds.concat(typeRows, featureRows);
+  added.push(entry);
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
 }
 
@@ -396,16 +461,24 @@ function unstyleAll() {
   if (m) { m.off("mousemove", onLookMove); m.off("click", onLookClick); if (!added.length) m.off("movestart", closePopup); }
 }
 
+function removeEntry(a, m) {
+  if (app.unregisterExternalNativeLayer) (a.rowIds || []).forEach((id) => app.unregisterExternalNativeLayer(id));
+  if (app.removeLayerGroup) (a.groupIds || []).slice().reverse().forEach((g) => g && app.removeLayerGroup(g));
+  if (!m) return;
+  a.layerIds.slice().reverse().forEach((id) => m.getLayer(id) && m.removeLayer(id));
+  a.sourceIds.forEach((id) => m.getSource(id) && m.removeSource(id));
+}
 function removeAll() {
   const m = map();
   closePopup();
-  for (const a of added.splice(0)) {
-    if (app.unregisterExternalNativeLayer) (a.rowIds || []).forEach((id) => app.unregisterExternalNativeLayer(id));
-    if (!m) continue;
-    a.layerIds.slice().reverse().forEach((id) => m.getLayer(id) && m.removeLayer(id));
-    a.sourceIds.forEach((id) => m.getSource(id) && m.removeSource(id));
-  }
+  for (const a of added.splice(0)) removeEntry(a, m);
   if (m) { m.off("click", onClick); m.off("mousemove", onMove); }
+}
+function removeKind(kind) {            // the maps of one kind (a database's map before it is drawn again)
+  const m = map();
+  closePopup();
+  for (let i = added.length - 1; i >= 0; i--) if (added[i].kind === kind) removeEntry(added.splice(i, 1)[0], m);
+  if (m && !added.length) { m.off("click", onClick); m.off("mousemove", onMove); }
 }
 
 const fail = (e) => notify(String((e && e.message) || e));
@@ -436,14 +509,15 @@ function stopWorker() {
   pyWorker = null; pyReady = false;
 }
 // one map at a time; Cancel stops the worker (the next map starts a new one)
-function makeStyle(file, box) {
+function makeStyle(file, box, opts) {
   return new Promise(async (done, fail_) => {
     working = {cancel: () => { stopWorker(); fail_(new Error("cancelled")); }};      // Cancel works from the first moment
     try {
       const first = !pyWorker;
       if (first)                                     // a worker from a blob: GeoLibre's page cannot start one from another address
         pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
-      const w = pyWorker, msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, "")};
+      const w = pyWorker, msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, ""),
+                                 opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths}};
       if (!pyReady) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();     // until the worker said it is ready
       w.onmessage = ({data}) => {
         if (data.step) box.say(data.step);
@@ -457,24 +531,44 @@ function makeStyle(file, box) {
   });
 }
 
-function openDatabase() {
+// the colours of a database's map: mapstyle's modes, themes and path styles (the same as its page and command line)
+const pick = (name, label, values, value) => ({name, label, type: "select", value, options: values.map(([v, l]) => ({value: v, label: l}))});
+const dbFields = (file, o) => [
+  ...(file ? [{name: "file", label: "duckOSM database (.duckdb)", type: "file", accept: ".duckdb", required: true}] : []),
+  pick("mode", "Roads in front", [["all", "All modes"], ["driving", "Driving"], ["walking", "Walking"], ["cycling", "Cycling"]], o.mode),
+  pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"]], o.theme),
+  pick("paths", "Footpaths and cycleways", [["google", "Google (calm lines)"], ["osm", "OpenStreetMap (dotted)"], ["komoot", "Komoot (bold)"], ["cyclosm", "CyclOSM (blue)"]], o.paths),
+  pick("features", "Feature layers (crossings, traffic signals, …)", [["page", "As the mapstyle page opens"], ["all", "Show all of them"]], o.features),
+];
+let lastDb = null;                                   // {file, opts}: "Redraw with other colours" makes the same file again
+const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", features: "page"};
+
+async function runDatabase(file, opts) {
+  const box = progress("reading " + file.name, () => working && working.cancel());
+  try {
+    const style = await makeStyle(file, box, opts);
+    box.say("drawing");
+    removeKind("database");                          // the map of the last time goes when the new one is ready
+    await addStyleObject(JSON.parse(style), file.name, "database", {showAll: opts.features === "all"});
+    lastDb = {file, opts};
+  } catch (e) {
+    if (!(e && e.message === "cancelled")) fail(e);
+  } finally {
+    working = null; box.done();
+  }
+}
+
+async function openDatabase() {
   if (working) return notify("A map is being made: wait for it, or cancel it.", "warn");
-  const input = Object.assign(document.createElement("input"), {type: "file", accept: ".duckdb"});
-  input.onchange = async () => {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    const box = progress("reading " + file.name, () => working && working.cancel());
-    try {
-      const style = await makeStyle(file, box);
-      box.say("drawing");
-      await addStyleObject(JSON.parse(style), file.name, "database");
-    } catch (e) {
-      if (!(e && e.message === "cancelled")) fail(e);
-    } finally {
-      working = null; box.done();
-    }
-  };
-  input.click();
+  const r = await ask("Open a duckOSM database", dbFields(true, lastDb ? lastDb.opts : DB_DEFAULTS), "Open");
+  if (r) await runDatabase(r.file, r);
+}
+
+async function redrawDatabase() {
+  if (working) return notify("A map is being made: wait for it, or cancel it.", "warn");
+  if (!lastDb) return notify("Open a duckOSM database first.", "warn");
+  const r = await ask("Redraw " + lastDb.file.name + " with other colours", dbFields(false, lastDb.opts), "Redraw");
+  if (r) await runDatabase(lastDb.file, r);
 }
 
 async function askAddStyle() {
@@ -500,6 +594,7 @@ export const plugin = {
       disposeMenu = app.registerToolbarMenu({
         id: "roadstyle-menu", label: "roadstyle",
         items: [{id: "db", label: "Open a duckOSM database\u2026", onSelect: run(openDatabase)},
+                {id: "redraw", label: "Redraw the database with other colours\u2026", onSelect: run(redrawDatabase)},
                 {id: "add", label: "Add a roadstyle layer\u2026", onSelect: run(askAddStyle)},
                 {id: "look", label: "Style a layer with roadstyle\u2026", onSelect: run(askStyleLayer)},
                 {id: "remove", label: "Remove roadstyle layers", onSelect: run(removeEverything)}],
@@ -528,5 +623,7 @@ export const plugin = {
       .forEach((u) => addStyle(u).catch(fail));
   },
 };
+
+export const __test = {addStyleObject};     // for tests/test_plugin.py
 
 export default plugin;

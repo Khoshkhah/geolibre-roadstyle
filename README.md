@@ -9,10 +9,17 @@ The plugin adds the menu **roadstyle**:
 
 | Item | Does |
 |---|---|
-| Open a duckOSM database… | Asks for a `.duckdb` file on your disk. roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`). No server and no export. The first time, it loads Python and the packages (about 30 s). A box shows the progress, and Cancel stops it. The result is one row for each layer, with the base map's layers in a "features" folder. |
+| Open a duckOSM database… | A dialog asks for a `.duckdb` file on your disk and for the colours: the roads in front (all modes, driving, walking, cycling), the theme (OpenStreetMap, Google, Grey), the path style (Google, OpenStreetMap, Komoot, CyclOSM) and whether to show all feature layers (crossings, traffic signals, …) or only those that the mapstyle page shows. roadstyle and mapstyle make the map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`). No server and no export. The first time, it loads Python and the packages (about 30 s). A box shows the progress, and Cancel stops it. |
+| Redraw the database with other colours… | Makes the map of the last file again with other choices, and replaces the first map. |
 | Add a roadstyle layer… | Asks for the URL of a roadstyle export (`style.json`, from `rs.export_style`). The link parameter `?roadstyle=<URL>` does the same. |
 | Style a layer with roadstyle… | Puts a roadstyle look (`rs.export_look`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or GeoParquet layer. Without a look URL, it uses `looks/default.json`. GeoLibre's own line of the layer becomes transparent, and Identify still shows the data. |
 | Remove roadstyle layers | Removes all that the plugin added. |
+
+**The Layers panel** has a folder for each map: the roads, a folder "road types" and a folder "features". "road types" has a
+row for each highway class in the data (motorway to footway), and rows for bridges and tunnels. The check box of a row hides or
+shows those roads in all road layers. The "features" folder has a row for each base-map layer (buildings, water, crossings,
+traffic signals, …). The mapstyle page starts some of them hidden: switch them on there, or choose "Show all" in the dialog.
+The 3D bridge decks are solid (roadstyle's export draws them at 70%, and the water shows through).
 
 A click on a road opens a popup with its data (not while a GeoLibre tool such as Identify is on). Resting the mouse on a road
 lights it. The popup shows every name and value as text.
@@ -61,7 +68,12 @@ python -m pytest tests -q                                              # a few s
 RS_TEST_DB=/path/to/monaco.duckdb python -m pytest tests -q -m slow    # also makes a map of a database with Pyodide (minutes)
 ```
 
-The tests do not run GeoLibre itself. After a change, also open the plugin in https://web.geolibre.app.
+The tests use a stand-in for GeoLibre. `python tests/e2e_geolibre.py <path to the .duckdb>` runs the real https://web.geolibre.app
+in a headless browser: it installs `dist/roadstyle-geolibre.zip`, activates the plugin, opens the database and switches a road
+type off (it needs the network and a few minutes). After a change, run it.
+
+GeoLibre shows the plugin only after Plugins › Installed › roadstyle (the plugin is installed, but not active). Then the menu
+**roadstyle** is at the end of the top bar.
 
 Design: `docs/design/style_export.md` in the [roadstyle repo](https://github.com/Khoshkhah/roadstyle), version 2. This repo was the
 `geolibre-plugin/` folder of roadstyle's `geolibre` branch; its history is kept.

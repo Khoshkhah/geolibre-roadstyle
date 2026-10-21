@@ -76,7 +76,7 @@ def test_syntax(f):
 
 def test_menu(host):
     ids = host.evaluate("() => rs.menu.items.map((i) => i.id)")
-    assert ids == ["db", "add", "look", "remove"]
+    assert ids == ["db", "redraw", "add", "look", "remove"]
     assert host.errors == []
 
 
@@ -117,6 +117,85 @@ def test_bad_url_is_a_message_not_a_crash(host):
     host.keyboard.press("Enter")
     host.wait_for_selector("[role=alert]", timeout=10000)
     assert "404" in host.inner_text("[role=alert]")
+
+
+def test_bridge_decks_are_opaque(host):
+    """roadstyle's export draws the 3D bridge decks at 0.7: the water shows through. The plugin sets them to 1."""
+    add_style(host)
+    assert host.evaluate("() => rs.map.getPaintProperty('rs0-roads-bridge-decks', 'fill-extrusion-opacity')") == 1
+
+
+def type_rows(page):
+    return page.evaluate("() => rs.rows.filter((r) => r.metadata.group === 'road type').map((r) => r.name)")
+
+
+def toggle(page, name, visible):
+    page.evaluate("([n, v]) => rs.rows.find((r) => r.metadata.group === 'road type' && r.name === n).paintBridge.setVisibility(v)", [name, visible])
+
+
+def rendered(page):
+    """the roads' lines on screen, by name"""
+    page.evaluate("() => rs.map.jumpTo({center: [18.06, 59.333], zoom: 13.5, pitch: 0})")
+    page.wait_for_function("() => rs.map.areTilesLoaded()")
+    return sorted(page.evaluate("() => [...new Set(rs.map.queryRenderedFeatures({layers: ['rs0-roads']}).map((f) => f.properties.name))]"))
+
+
+def test_road_type_rows_filter_the_roads(host):
+    add_style(host)
+    # GeoLibre lists the last row on top, so the rows are registered from the end: it shows bridges, tertiary, residential, footway
+    assert type_rows(host) == ["footway", "residential", "tertiary", "bridges"]
+    assert len(rendered(host)) == 3
+    toggle(host, "tertiary", False)
+    assert "Bro" not in rendered(host) and len(rendered(host)) == 2
+    f = host.evaluate("() => rs.map.getFilter('rs0-roads-casing')")
+    assert f[0] == "all" and f[1] == ["!=", ["get", "highway"], "none"]               # the layer's own filter stays
+    toggle(host, "footway", False)
+    assert rendered(host) == ["<img src=x onerror=\"window.__pwn=1\">"]
+    toggle(host, "tertiary", True); toggle(host, "footway", True)
+    assert len(rendered(host)) == 3
+    assert host.evaluate("() => rs.map.getFilter('rs0-roads')") in (None, [])         # no filter again, as the style had it
+    toggle(host, "bridges", False)                                                    # the bridge road goes, and its deck
+    assert "Bro" not in rendered(host)
+    assert host.errors == []
+
+
+def test_removing_a_map_removes_its_rows_and_a_new_one_has_a_new_prefix(host):
+    add_style(host)
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'remove').onSelect()")
+    host.wait_for_function("() => rs.rows.length === 0")
+    add_style(host)
+    assert host.evaluate("() => rs.map.getLayer('rs1-roads') != null && rs.map.getLayer('rs0-roads') == null")
+    assert host.evaluate("() => rs.groups.length") >= 1
+    assert host.errors == []
+
+
+def test_database_dialog_has_the_colour_choices(host):
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
+    host.wait_for_selector("[role=dialog]")
+    labels = host.eval_on_selector_all("[role=dialog] label", "(els) => els.map((e) => e.textContent)")
+    assert labels[0].startswith("duckOSM database") and "Colours" in labels and "Footpaths and cycleways" in labels
+    assert host.eval_on_selector_all("[role=dialog] select:nth-of-type(1) option", "(os) => os.map((o) => o.value)")
+    themes = host.evaluate("() => [...document.querySelectorAll('[role=dialog] select')].map((s) => [...s.options].map((o) => o.value))")
+    assert themes[1] == ["osm", "google", "grey"] and themes[3] == ["page", "all"]
+    host.keyboard.press("Escape")
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'redraw').onSelect()")       # nothing to redraw yet: a message
+    host.wait_for_selector(".rs-pl-toast")
+    assert "Open a duckOSM database first" in host.inner_text(".rs-pl-toast")
+
+
+def test_show_all_feature_layers(host):
+    """The option "Show all of them" shows the feature layers that the mapstyle page starts hidden."""
+    vis = host.evaluate("""async () => {
+        const mod = await import('/index.js');
+        const st = await (await fetch('/tests/style.json')).json();
+        st.layers.push({id: 'ov-crossings', type: 'line', source: 'roads', layout: {visibility: 'none'},
+                        metadata: {'roadstyle:group': 'crossings'}, paint: {'line-color': '#00f'}});
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style');
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {showAll: true});
+        return [rs.map.getLayoutProperty('rs0-ov-crossings', 'visibility'), rs.map.getLayoutProperty('rs1-ov-crossings', 'visibility')];
+    }""")
+    assert vis == ["none", "visible"]
+    assert host.errors == []
 
 
 def test_project_state_keeps_styles_not_databases(host):
@@ -161,10 +240,19 @@ DB = os.environ.get("RS_TEST_DB")
 slow = pytest.mark.skipif(not DB or not Path(DB or "x").exists(), reason="set RS_TEST_DB to a duckOSM .duckdb file")
 
 
-def open_db(page):
-    with page.expect_file_chooser() as fc:
-        page.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
-    fc.value.set_files(DB)
+def open_db(page, **choices):
+    """the menu item, then the dialog: the file and the choices (selects by their label's order: mode, theme, paths, features)"""
+    page.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
+    page.wait_for_selector("[role=dialog]")
+    page.set_input_files("[role=dialog] input[type=file]", DB)
+    for i, key in enumerate(("mode", "theme", "paths", "features")):
+        if key in choices:
+            page.select_option(f"[role=dialog] select >> nth={i}", choices[key])
+    page.click("[role=dialog] button[type=submit]")
+
+
+def style_fingerprint(page):
+    return page.evaluate("() => JSON.stringify(rs.map.getStyle().layers.filter((l) => l.id.startsWith('rs')).map((l) => [l.id, l.paint]))")
 
 
 @pytest.mark.slow
@@ -189,5 +277,19 @@ def test_database_map_and_retry_after_a_failed_start(host):
     open_db(host)                                                      # the second try works
     host.wait_for_function("(n) => rs.map.getStyle().layers.length > n", arg=n, timeout=360000)
     assert host.evaluate("() => rs.plugin.getProjectState().urls") == []          # a database's map is not saved by address
+    types = host.evaluate("() => rs.rows.filter((r) => r.metadata.group === 'road type').map((r) => r.name)")
+    assert "residential" in types or "footway" in types                            # the road types of the real data
+    first = style_fingerprint(host)
+    count = host.evaluate("() => rs.map.getStyle().layers.length")
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'redraw').onSelect()")      # the same file, other colours
+    host.wait_for_selector("[role=dialog]")
+    host.select_option("[role=dialog] select >> nth=1", "grey")
+    host.click("[role=dialog] button[type=submit]")
+    host.wait_for_function("(f) => JSON.stringify(rs.map.getStyle().layers.filter((l) => l.id.startsWith('rs')).map((l) => [l.id, l.paint])) !== f",
+                           arg=first, timeout=120000)
+    host.wait_for_selector(".rs-pl-progress", state="detached", timeout=120000)
+    ids = host.evaluate("() => rs.map.getStyle().layers.map((l) => l.id).filter((i) => i.startsWith('rs'))")
+    assert ids and all(i.startswith("rs1-") for i in ids)                              # the first map (rs0-) was removed, not added to
+    assert abs(host.evaluate("() => rs.map.getStyle().layers.length") - count) <= 3     # the grey theme has a few layers less or more
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'remove').onSelect()")
     assert host.errors == []
