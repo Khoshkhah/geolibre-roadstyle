@@ -198,6 +198,33 @@ def test_show_all_feature_layers(host):
     assert host.errors == []
 
 
+PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+
+def test_images_do_not_clash_with_the_base_map(host):
+    """GeoLibre's base map has an image 'oneway' (21 x 21): roadstyle's arrow must not be skipped because of it."""
+    out = host.evaluate("""async (png) => {
+        const mod = await import('/index.js'), m = rs.map;
+        m.addImage('oneway', {width: 2, height: 2, data: new Uint8Array(16)});                // the base map's own image
+        const st = await (await fetch('/tests/style.json')).json();
+        st.metadata['roadstyle:images'] = {oneway: {url: png, sdf: true, pixelRatio: 4}};
+        st.layers.push({id: 'roads-arrows', type: 'symbol', source: 'roads', layout: {'icon-image': 'oneway', 'symbol-placement': 'line-center'}});
+        st.layers.push({id: 'roads-x', type: 'symbol', source: 'roads', layout: {'icon-image': ['match', ['get', 'highway'], 'tertiary', 'oneway', 'other-icon']}});
+        await mod.__test.addStyleObject(st, 'a', 'style');
+        const img = m.getImage('rs0-oneway');
+        const res = {layer: m.getLayoutProperty('rs0-roads-arrows', 'icon-image'), expr: m.getLayoutProperty('rs0-roads-x', 'icon-image'),
+                     own: img && {w: img.data.width, sdf: img.sdf, pr: img.pixelRatio}, base: m.getImage('oneway').data.width};
+        document.querySelector('.rs-pl') || 0;
+        return res; }""", PNG)
+    assert out["layer"] == "rs0-oneway" and out["base"] == 2                          # the base map's image stays as it was
+    assert out["expr"] == ["match", ["get", "highway"], "tertiary", "rs0-oneway", "other-icon"]
+    assert out["own"] == {"w": 1, "sdf": True, "pr": 4}
+    host.evaluate("() => rs.menu.items.find((i) => i.id === 'remove').onSelect()")
+    host.wait_for_function("() => !rs.map.hasImage('rs0-oneway')")                       # the image goes with the map
+    assert host.evaluate("() => rs.map.hasImage('oneway')")
+    assert host.errors == []
+
+
 def test_project_state_keeps_styles_not_databases(host):
     add_style(host)
     assert host.evaluate("() => rs.plugin.getProjectState()") == {"urls": ["/tests/style.json"]}

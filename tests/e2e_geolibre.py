@@ -1,13 +1,22 @@
-"""The plugin in the real GeoLibre (https://web.geolibre.app), in a headless browser: install the .zip, activate the plugin, open a
-database through the plugin's dialog, and switch the "residential" road type off. Needs the network, playwright and a few minutes.
+"""The plugin in the real GeoLibre (https://web.geolibre.app), in a headless browser: install the .zip (and a probe plugin, tests/probe,
+that gives the test the map), open a database through the plugin's dialog, and check the map:
+
+- the arrows use roadstyle's image (GeoLibre's base map has an image 'oneway' of its own: a name clash),
+- the crossings and the traffic signals show with the choice "Show all" at zoom 17,
+- the "residential" road type switches its roads off.
+
+Needs the network, playwright, duckdb and a few minutes.
 
     python build.py --zip
     python tests/e2e_geolibre.py /path/to/monaco.duckdb [screenshots-folder]
 """
 import io
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
+import duckdb
 from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright
 
@@ -20,8 +29,34 @@ def changed(a, b):
     return sum(1 for v in d.getdata() if sum(v) > 40)
 
 
+def probe_zip(folder):
+    out = Path(folder) / "rs-probe.zip"
+    with zipfile.ZipFile(out, "w") as z:
+        for f in ("plugin.json", "index.js"):
+            z.write(ROOT / "tests" / "probe" / f, f)
+    return out
+
+
+def activate(pg, name):
+    """Plugins > Installed > name (a plugin that is already active has a tick)"""
+    import re
+    pg.get_by_role("button", name="Plugins").first.click()
+    pg.get_by_text(re.compile(r"^Installed")).first.click()
+    items = [e.inner_text().strip() for e in pg.query_selector_all("[role=menuitem], [role=menuitemcheckbox], [role=menu] button")]
+    if any(i.startswith(name) and "✓" in i for i in items):
+        pg.keyboard.press("Escape")
+        pg.keyboard.press("Escape")
+        return
+    pg.get_by_text(name, exact=True).first.click()
+    pg.wait_for_timeout(1500)
+
+
 def main(db, out=None):
-    with sync_playwright() as p:
+    con = duckdb.connect(str(db), read_only=True)
+    con.execute("LOAD spatial")
+    lng, lat = con.execute("SELECT ST_X(geom), ST_Y(geom) FROM features.traffic WHERE kind = 'crossing' LIMIT 1").fetchone()
+    con.close()
+    with tempfile.TemporaryDirectory() as tmp, sync_playwright() as p:
         browser = p.chromium.launch(args=["--use-gl=swiftshader", "--enable-unsafe-swiftshader"])
         pg = browser.new_page(viewport={"width": 1500, "height": 900})
         errors, said = [], []
@@ -32,22 +67,55 @@ def main(db, out=None):
         pg.get_by_role("button", name="Settings").first.click()
         pg.get_by_text("Manage Plugins", exact=True).first.click()
         pg.locator("[role=dialog] button", has_text="Settings").last.click()
-        with pg.expect_file_chooser() as fc:
-            pg.get_by_role("button", name="Choose .zip…").click()
-        fc.value.set_files(str(ZIP))
-        pg.get_by_text('Installed plugin "roadstyle"').wait_for(timeout=20000)
+        for z in (ZIP, probe_zip(tmp)):
+            with pg.expect_file_chooser() as fc:
+                pg.get_by_role("button", name="Choose .zip…").click()
+            fc.value.set_files(str(z))
+            pg.wait_for_timeout(3500)
         pg.locator("[role=dialog] button", has_text="Close").last.click()
-        pg.get_by_role("button", name="Plugins").first.click()
-        pg.get_by_text("Installed", exact=True).first.click()
-        pg.get_by_text("roadstyle", exact=True).first.click()            # the plugin is installed, not active, until this
+        pg.wait_for_timeout(800)
+        activate(pg, "roadstyle")
+        activate(pg, "rs-probe")
+        assert pg.evaluate("() => !!(window.__rs && window.__rs.map)"), "the probe has no map"
+        base = pg.evaluate("() => { const i = window.__rs.map.getImage('oneway'); return i && i.data.width; }")
         pg.get_by_role("button", name="roadstyle").first.click()
         pg.get_by_text("Open a duckOSM database", exact=False).first.click()
         pg.wait_for_selector("[role=dialog] input[type=file]")
         pg.set_input_files("[role=dialog] input[type=file]", str(db))
+        assert pg.eval_on_selector("[role=dialog] select >> nth=3", "(s) => s.value") == "all"       # the default: show all feature layers
         pg.click("[role=dialog] button[type=submit]")
         pg.wait_for_selector(".rs-pl-progress", timeout=20000)
         pg.wait_for_selector(".rs-pl-progress", state="detached", timeout=400000)
         pg.wait_for_timeout(8000)
+
+        # 1) the arrows: roadstyle's own image, not the base map's
+        arrows = pg.evaluate("""() => { const m = window.__rs.map, id = m.getLayoutProperty('rs0-roads-arrows', 'icon-image'), i = m.getImage(id);
+                                        return {id, w: i && i.data.width, sdf: i && i.sdf, base: m.getImage('oneway').data.width}; }""")
+        print("arrows:", arrows, "(the base map's own 'oneway' image:", base, "px wide)")
+        assert arrows["id"] == "rs0-oneway" and arrows["sdf"] is True and arrows["w"] != arrows["base"], arrows
+
+        # 2) the crossings and the traffic signals show with "Show all"
+        pg.evaluate("([lng, lat]) => window.__rs.map.jumpTo({center: [lng, lat], zoom: 17.5, pitch: 0, bearing: 0})", [lng, lat])
+        pg.wait_for_timeout(6000)
+        feat = pg.evaluate("""() => { const m = window.__rs.map, out = {};
+            for (const g of ['crossings', 'traffic_signals']) {
+              const ids = m.getStyle().layers.filter((l) => l.metadata && l.metadata['roadstyle:group'] === g).map((l) => l.id);
+              out[g] = {layers: ids.length, visible: ids.filter((i) => m.getLayoutProperty(i, 'visibility') !== 'none').length,
+                        drawn: ids.length ? m.queryRenderedFeatures({layers: ids}).length : 0}; }
+            return out; }""")
+        print("feature layers:", feat)
+        assert feat["crossings"]["layers"] > 0 and feat["crossings"]["visible"] == feat["crossings"]["layers"], feat
+        assert feat["crossings"]["drawn"] > 0, feat
+        for name in ("crossings", "traffic_signals"):                          # and their rows are in the Layers panel
+            assert pg.get_by_text(name, exact=True).count() > 0, name + " has no row in the Layers panel"
+        assert feat["traffic_signals"]["layers"] > 0 and feat["traffic_signals"]["visible"] == feat["traffic_signals"]["layers"], feat
+        if out:
+            Path(out).mkdir(parents=True, exist_ok=True)
+            pg.screenshot(path=str(Path(out) / "crossings.png"))
+
+        # 3) the road type "residential"
+        pg.evaluate("() => window.__rs.map.jumpTo({zoom: 14.8})")
+        pg.wait_for_timeout(4000)
         clip = {"x": 470, "y": 100, "width": 800, "height": 600}
         before = pg.screenshot(clip=clip)
         row = pg.get_by_text("residential", exact=True).first
@@ -56,10 +124,6 @@ def main(db, out=None):
         pg.mouse.click(box["x"] - 29, box["y"] + box["height"] / 2)      # the eye of the row
         pg.wait_for_timeout(3000)
         after = pg.screenshot(clip=clip)
-        if out:
-            Path(out).mkdir(parents=True, exist_ok=True)
-            (Path(out) / "before.png").write_bytes(before)
-            (Path(out) / "after.png").write_bytes(after)
         n = changed(before, after)
         print("pixels changed when the residential roads are switched off:", n)
         assert n > 1000, "the road type row did not change the map"

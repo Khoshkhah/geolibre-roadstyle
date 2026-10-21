@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.14.0";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.14.1";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -97,7 +97,7 @@ function baseFont(m) {
 
 // the export's sprite (the one-way arrow): each icon cut out of the PNG and added to the map under the layer's prefix
 async function loadSprite(m, url, prefix) {
-  if (!url) return;
+  if (!url) return [];
   const [index, png] = await Promise.all([fetch(url + ".json").then((r) => r.json()), fetch(url + ".png").then((r) => r.blob())]);
   const bitmap = await createImageBitmap(png);
   const canvas = document.createElement("canvas");
@@ -107,6 +107,7 @@ async function loadSprite(m, url, prefix) {
   for (const [name, d] of Object.entries(index)) {
     if (!m.hasImage(prefix + name)) m.addImage(prefix + name, ctx.getImageData(d.x, d.y, d.width, d.height), {pixelRatio: d.pixelRatio || 1, sdf: !!d.sdf});
   }
+  return Object.keys(index).map((n) => prefix + n);
 }
 
 // the look's feature under the cursor: [styled entry, feature] of the top one, or null
@@ -287,6 +288,11 @@ function setRoadFilters(m, a) {
     if (m.getLayer(id)) m.setFilter(id, conds.length ? ["all", ...(filter ? [filter] : []), ...conds] : (filter || null));
 }
 
+const IMAGE_PROPS = ["icon-image", "fill-pattern", "line-pattern", "fill-extrusion-pattern", "background-pattern"];
+function renameImages(v, own, prefix) {          // in an expression: a string that is the name of one of the style's images
+  if (typeof v === "string") return v in own ? prefix + v : v;
+  return Array.isArray(v) ? v.map((x) => renameImages(x, own, prefix)) : v;
+}
 let prefixN = 0;                       // a prefix is never used twice, also after a map was removed
 async function addStyleObject(style, url, kind = "style", opts = {}) {
   const m = map();
@@ -295,9 +301,12 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
   if (opts.showAll) for (const l of style.layers) if (l.layout && l.layout.visibility === "none") l.layout.visibility = "visible";
   await loadUI(style.metadata && style.metadata["roadstyle:interaction"]);
   const prefix = `rs${prefixN++}-`;
-  if (style.sprite) await loadSprite(m, style.sprite, prefix);
+  const spriteImages = style.sprite ? await loadSprite(m, style.sprite, prefix) : [];
   // the style's own images (roadstyle's arrow, mapstyle's icons and textures: roadstyle:images), added under their names
-  const images = (style.metadata && style.metadata["roadstyle:images"]) || {};
+  // Under the map's prefix: GeoLibre's base map has an image named "oneway" of its own (21 x 21, a different arrow), and a name that
+  // exists is not added again, so the arrows would be the base map's, not roadstyle's.
+  const own = (style.metadata && style.metadata["roadstyle:images"]) || {};
+  const images = Object.fromEntries(Object.entries(own).map(([n, v]) => [prefix + n, v]));
   await addImages(m, images);
   const font = baseFont(m);
   const sourceIds = [], layerIds = [];
@@ -308,8 +317,13 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
   for (const l of style.layers) {
     const layout = {...(l.layout || {})};
     if (layout["text-font"] && font) layout["text-font"] = font;
-    if (typeof layout["icon-image"] === "string" && !(layout["icon-image"] in images)) layout["icon-image"] = prefix + layout["icon-image"];
-    m.addLayer({...l, id: prefix + l.id, source: prefix + l.source, layout});
+    const paint = l.paint ? {...l.paint} : undefined;
+    for (const k of IMAGE_PROPS) {                                   // the image names of the layer, with the prefix (strings, and strings in expressions)
+      if (typeof layout[k] === "string") layout[k] = prefix + layout[k];
+      else if (k in layout) layout[k] = renameImages(layout[k], own, prefix);
+      if (paint && k in paint) paint[k] = typeof paint[k] === "string" ? prefix + paint[k] : renameImages(paint[k], own, prefix);
+    }
+    m.addLayer({...l, id: prefix + l.id, source: prefix + l.source, layout, ...(paint ? {paint} : {})});
     layerIds.push(prefix + l.id);
   }
   // one GeoLibre row per group of the style (metadata roadstyle:group: "roads", or a base-map layer's name), in one folder,
@@ -321,7 +335,7 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
     groups.get(g).push(layerIds[i]);
   });
   const rowIds = [], featureRows = [], typeRows = [], groupIds = [];
-  const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, hidden: {classes: new Set(), bridge: false, tunnel: false},
+  const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, imageIds: Object.keys(images).concat(spriteImages), hidden: {classes: new Set(), bridge: false, tunnel: false},
                  roadLayers: style.layers.map((l, i) => ({id: layerIds[i], filter: l.filter || null, g: (l.metadata && l.metadata["roadstyle:group"]) || "roads"}))
                    .filter((x) => x.g === "roads")};
   if (app.registerExternalNativeLayer) {
@@ -467,6 +481,7 @@ function removeEntry(a, m) {
   if (!m) return;
   a.layerIds.slice().reverse().forEach((id) => m.getLayer(id) && m.removeLayer(id));
   a.sourceIds.forEach((id) => m.getSource(id) && m.removeSource(id));
+  (a.imageIds || []).forEach((id) => m.hasImage(id) && m.removeImage(id));
 }
 function removeAll() {
   const m = map();
@@ -541,7 +556,7 @@ const dbFields = (file, o) => [
   pick("features", "Feature layers (crossings, traffic signals, …)", [["page", "As the mapstyle page opens"], ["all", "Show all of them"]], o.features),
 ];
 let lastDb = null;                                   // {file, opts}: "Redraw with other colours" makes the same file again
-const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", features: "page"};
+const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", features: "all"};     // all: the crossings and signals show from their zoom; the page hides them
 
 async function runDatabase(file, opts) {
   const box = progress("reading " + file.name, () => working && working.cancel());

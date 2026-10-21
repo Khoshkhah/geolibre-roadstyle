@@ -1,0 +1,1 @@
+{"id": "rs-probe", "name": "rs-probe", "version": "0.0.1", "entry": "index.js", "description": "A probe for tests/e2e_geolibre.py: it gives the test the map of GeoLibre.", "engines": ["maplibre"]}
