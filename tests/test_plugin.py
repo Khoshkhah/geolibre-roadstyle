@@ -119,10 +119,32 @@ def test_bad_url_is_a_message_not_a_crash(host):
     assert "404" in host.inner_text("[role=alert]")
 
 
-def test_bridge_decks_are_opaque(host):
-    """roadstyle's export draws the 3D bridge decks at 0.7: the water shows through. The plugin sets them to 1."""
-    add_style(host)
-    assert host.evaluate("() => rs.map.getPaintProperty('rs0-roads-bridge-decks', 'fill-extrusion-opacity')") == 1
+def test_bridge_decks_are_left_out_by_default_and_opaque_when_kept(host):
+    """The 3D bridge decks are off by default; when kept, they are drawn at 1 (roadstyle's export draws them at 0.7)."""
+    vis = host.evaluate("""async () => {
+        const mod = await import('/index.js');
+        const st = await (await fetch('/tests/style.json')).json();
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style');
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {decks: true});
+        return [rs.map.getLayer('rs0-roads-bridge-decks') != null, rs.map.getSource('rs0-decks') != null,
+                rs.map.getPaintProperty('rs1-roads-bridge-decks', 'fill-extrusion-opacity')];
+    }""")
+    assert vis == [False, False, 1]
+    assert host.errors == []
+
+
+def test_background_layers_can_be_left_out(host):
+    out = host.evaluate("""async () => {
+        const mod = await import('/index.js');
+        const st = await (await fetch('/tests/style.json')).json();
+        st.sources.ocean = {type: 'geojson', data: {type: 'FeatureCollection', features: []}};
+        st.layers.unshift({id: 'ov0-fill', type: 'fill', source: 'ocean', metadata: {'roadstyle:group': 'ocean'}, paint: {'fill-color': '#00f'}});
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style', {background: 'none'});
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {background: 'page'});
+        return [rs.map.getLayer('rs0-ov0-fill') != null, rs.map.getSource('rs0-ocean') != null, rs.map.getLayer('rs1-ov0-fill') != null];
+    }""")
+    assert out == [False, False, True]
+    assert host.errors == []
 
 
 def type_rows(page):
@@ -176,7 +198,7 @@ def test_database_dialog_has_the_colour_choices(host):
     assert labels[0].startswith("duckOSM database") and "Colours" in labels and "Footpaths and cycleways" in labels
     assert host.eval_on_selector_all("[role=dialog] select:nth-of-type(1) option", "(os) => os.map((o) => o.value)")
     themes = host.evaluate("() => [...document.querySelectorAll('[role=dialog] select')].map((s) => [...s.options].map((o) => o.value))")
-    assert themes[1] == ["osm", "google", "grey"] and themes[3] == ["page", "all"]
+    assert themes[1] == ["osm", "google", "grey"] and themes[3] == ["all", "page"] and themes[4] == ["none", "page"] and themes[5] == ["off", "on"]
     host.keyboard.press("Escape")
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'redraw').onSelect()")       # nothing to redraw yet: a message
     host.wait_for_selector(".rs-pl-toast")
@@ -272,7 +294,7 @@ def open_db(page, **choices):
     page.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
     page.wait_for_selector("[role=dialog]")
     page.set_input_files("[role=dialog] input[type=file]", DB)
-    for i, key in enumerate(("mode", "theme", "paths", "features")):
+    for i, key in enumerate(("mode", "theme", "paths", "features", "background", "decks")):
         if key in choices:
             page.select_option(f"[role=dialog] select >> nth={i}", choices[key])
     page.click("[role=dialog] button[type=submit]")

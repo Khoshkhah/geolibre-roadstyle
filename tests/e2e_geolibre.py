@@ -106,6 +106,13 @@ def main(db, out=None):
         print("feature layers:", feat)
         assert feat["crossings"]["layers"] > 0 and feat["crossings"]["visible"] == feat["crossings"]["layers"], feat
         assert feat["crossings"]["drawn"] > 0, feat
+        # GeoLibre puts a folder at the place of its first row: the features must be drawn over the roads, as on the mapstyle page
+        order = pg.evaluate("""() => { const L = window.__rs.map.getStyle().layers, g = (l) => l.metadata && l.metadata['roadstyle:group'];
+            const at = (name, first) => { const k = L.map((l, i) => g(l) === name ? i : -1).filter((i) => i >= 0); return first ? Math.min(...k) : Math.max(...k); };
+            return {roadsLast: at('roads', false), crossingsFirst: at('crossings', true), signalsFirst: at('traffic_signals', true), railwaysLast: at('railways', false), roadsFirst: at('roads', true)}; }""")
+        print("draw order:", order)
+        assert order["roadsLast"] < order["crossingsFirst"] and order["roadsLast"] < order["signalsFirst"], order      # features over the roads
+        assert order["railwaysLast"] < order["roadsFirst"], order                                                      # railways and parking under them
         for name in ("crossings", "traffic_signals"):                          # and their rows are in the Layers panel
             assert pg.get_by_text(name, exact=True).count() > 0, name + " has no row in the Layers panel"
         assert feat["traffic_signals"]["layers"] > 0 and feat["traffic_signals"]["visible"] == feat["traffic_signals"]["layers"], feat

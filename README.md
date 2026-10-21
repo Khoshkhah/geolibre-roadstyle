@@ -1,6 +1,6 @@
 # roadstyle for GeoLibre
 
-> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.14.1)
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.14.2)
 >
 > In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**, choose the `.zip`, then **Plugins › Installed › roadstyle**.
 > The same file is in this repo as [`dist/roadstyle-geolibre.zip`](dist/roadstyle-geolibre.zip). All versions: [Releases](https://github.com/Khoshkhah/geolibre-roadstyle/releases).
@@ -20,11 +20,16 @@ The plugin adds the menu **roadstyle**:
 | Style a layer with roadstyle… | Puts a roadstyle look (`rs.export_look`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or GeoParquet layer. Without a look URL, it uses `looks/default.json`. GeoLibre's own line of the layer becomes transparent, and Identify still shows the data. |
 | Remove roadstyle layers | Removes all that the plugin added. |
 
-**The Layers panel** has a folder for each map: the roads, a folder "road types" and a folder "features". "road types" has a
+**The Layers panel** has a folder for each map: the roads, and in it the folders "road types", "under the roads" and "features". "road types" has a
 row for each highway class in the data (motorway to footway), and rows for bridges and tunnels. The check box of a row hides or
-shows those roads in all road layers. The "features" folder has a row for each base-map layer (buildings, water, crossings,
-traffic signals, …). The mapstyle page starts some of them hidden. The dialog shows all of them by default; they appear when you zoom in.
-The 3D bridge decks are solid (roadstyle's export draws them at 70%, and the water shows through).
+shows those roads in all road layers. "under the roads" has the layers that the mapstyle page draws under the roads (railways,
+parking, platforms). "features" has the layers over the roads (crossings, traffic signals, bus and train stations, parking signs).
+Crossings and traffic signals show from zoom 16 (the plugin says so when you open a map at a lower zoom).
+
+**What the dialog leaves out by default:** the background (ocean, land cover, water, waterways, buildings), because GeoLibre has its own
+base map, and the ocean polygon looked like land in the blue colour of water; and the 3D bridge decks (roadstyle's export draws them
+at 70%, so the water shows through). Choose "As the mapstyle page" and "On" in the dialog to get them. The roads and the features
+stay over GeoLibre's map.
 
 A click on a road opens a popup with its data (not while a GeoLibre tool such as Identify is on). Resting the mouse on a road
 lights it. The popup shows every name and value as text.

@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.14.1";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.14.2";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -260,6 +260,18 @@ async function addStyle(url) {
 }
 // a roadstyle style (export_style's style.json, or export_inline's style with the data inside) as GeoLibre rows
 // roadstyle's export, adjusted for GeoLibre's map (these two belong in roadstyle's export_style; remove them when it has them)
+// What the plugin leaves out of a style, by the user's choice: the 3D bridge decks (opts.decks), and the base-map layers that make a
+// background (opts.background "none": ocean, land cover, water, waterways, buildings). Sources that no layer uses any more go too.
+const BACKGROUND = ["ocean", "landcover", "water", "waterways", "buildings"];
+function prune(style, opts) {
+  const group = (l) => (l.metadata && l.metadata["roadstyle:group"]) || "roads";
+  const drop = (l) => (opts.decks !== true && (l.type === "fill-extrusion" || l.source === "decks")) ||
+                      (opts.background === "none" && BACKGROUND.includes(group(l)));
+  style.layers = style.layers.filter((l) => !drop(l));
+  const used = new Set(style.layers.map((l) => l.source));
+  for (const k of Object.keys(style.sources)) if (!used.has(k)) delete style.sources[k];
+  return style;
+}
 function fixExport(style) {
   for (const l of style.layers)        // the 3D bridge decks are drawn at 0.7: the water shows through and the bridges look transparent
     if (l.type === "fill-extrusion" && l.paint) l.paint["fill-extrusion-opacity"] = 1;
@@ -297,6 +309,7 @@ let prefixN = 0;                       // a prefix is never used twice, also aft
 async function addStyleObject(style, url, kind = "style", opts = {}) {
   const m = map();
   if (!m) throw new Error("roadstyle: GeoLibre has no MapLibre map (the plugin needs the MapLibre renderer)");
+  prune(style, opts);
   fixExport(style);
   if (opts.showAll) for (const l of style.layers) if (l.layout && l.layout.visibility === "none") l.layout.visibility = "visible";
   await loadUI(style.metadata && style.metadata["roadstyle:interaction"]);
@@ -334,11 +347,12 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(layerIds[i]);
   });
-  const rowIds = [], featureRows = [], typeRows = [], groupIds = [];
+  const rowIds = [], featureRows = [], underRows = [], typeRows = [], groupIds = [];
   const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, imageIds: Object.keys(images).concat(spriteImages), hidden: {classes: new Set(), bridge: false, tunnel: false},
                  roadLayers: style.layers.map((l, i) => ({id: layerIds[i], filter: l.filter || null, g: (l.metadata && l.metadata["roadstyle:group"]) || "roads"}))
                    .filter((x) => x.g === "roads")};
   if (app.registerExternalNativeLayer) {
+    const roadsAt = [...groups.keys()].indexOf("roads");
     [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
       const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
       app.registerExternalNativeLayer({
@@ -347,7 +361,9 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
         paintMode: "plugin",          // roadstyle paints these layers: GeoLibre's style editors do not apply
         paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))},
       });
-      (g === "roads" ? rowIds : featureRows).push(id);
+      // A GeoLibre folder is drawn at the place of its first row. So the layers that the style draws under the roads (railways,
+      // parking) go to one folder, and the features over the roads (crossings, traffic signals, stations) to another.
+      (g === "roads" ? rowIds : i < roadsAt ? underRows : featureRows).push(id);
     });
     // the road types: a row for each class, bridges and tunnels (a row with no layer of its own: its check box sets the filters)
     const types = roadTypes(style);
@@ -382,13 +398,16 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
         if (app.moveLayerGroupToGroup && top && g) app.moveLayerGroupToGroup(g, top);
       };
       nest("road types", typeRows);
+      nest("under the roads", underRows);
       nest("features", featureRows);
     }
   }
   if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); }   // the popup stays at its road while the map moves, as on the page
-  entry.rowIds = rowIds.concat(typeRows, featureRows);
+  entry.rowIds = rowIds.concat(typeRows, underRows, featureRows);
   added.push(entry);
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
+  const small = style.layers.filter((l) => l.minzoom >= 16 && m.getLayoutProperty(prefix + l.id, "visibility") !== "none");
+  if (small.length && m.getZoom() < 16) notify("Crossings, traffic signals and other small features show from zoom 16: zoom in to see them.", "info");
 }
 
 // ---- approach 2 (docs/design/style_export.md): roadstyle's simple look on a GeoLibre data layer (DuckDB, GeoParquet, GeoJSON with
@@ -553,10 +572,12 @@ const dbFields = (file, o) => [
   pick("mode", "Roads in front", [["all", "All modes"], ["driving", "Driving"], ["walking", "Walking"], ["cycling", "Cycling"]], o.mode),
   pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"]], o.theme),
   pick("paths", "Footpaths and cycleways", [["google", "Google (calm lines)"], ["osm", "OpenStreetMap (dotted)"], ["komoot", "Komoot (bold)"], ["cyclosm", "CyclOSM (blue)"]], o.paths),
-  pick("features", "Feature layers (crossings, traffic signals, …)", [["page", "As the mapstyle page opens"], ["all", "Show all of them"]], o.features),
+  pick("features", "Feature layers (crossings, traffic signals, …)", [["all", "Show all of them (from zoom 16)"], ["page", "As the mapstyle page opens"]], o.features),
+  pick("background", "Background (ocean, land cover, water, buildings)", [["none", "None: roads and features over GeoLibre's map"], ["page", "As the mapstyle page"]], o.background),
+  pick("decks", "3D bridge decks", [["off", "Off"], ["on", "On"]], o.decks),
 ];
 let lastDb = null;                                   // {file, opts}: "Redraw with other colours" makes the same file again
-const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", features: "all"};     // all: the crossings and signals show from their zoom; the page hides them
+const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", features: "all", background: "none", decks: "off"};     // all: the crossings and signals show from their zoom; the page hides them
 
 async function runDatabase(file, opts) {
   const box = progress("reading " + file.name, () => working && working.cancel());
@@ -564,7 +585,7 @@ async function runDatabase(file, opts) {
     const style = await makeStyle(file, box, opts);
     box.say("drawing");
     removeKind("database");                          // the map of the last time goes when the new one is ready
-    await addStyleObject(JSON.parse(style), file.name, "database", {showAll: opts.features === "all"});
+    await addStyleObject(JSON.parse(style), file.name, "database", {showAll: opts.features === "all", background: opts.background, decks: opts.decks === "on"});
     lastDb = {file, opts};
   } catch (e) {
     if (!(e && e.message === "cancelled")) fail(e);
