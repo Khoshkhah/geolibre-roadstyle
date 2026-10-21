@@ -126,13 +126,17 @@ def test_ocean_and_decks_are_left_out_unless_chosen(host):
         const st = await (await fetch('/tests/style.json')).json();
         st.sources.ocean = {type: 'geojson', data: {type: 'FeatureCollection', features: []}};
         st.layers.unshift({id: 'ov0-fill', type: 'fill', source: 'ocean', metadata: {'roadstyle:group': 'ocean'}, paint: {'fill-color': '#00f'}});
+        st.layers.push({id: 'ov4-3d', type: 'fill-extrusion', source: 'roads', metadata: {'roadstyle:group': 'buildings 3D'},
+                        paint: {'fill-extrusion-color': '#ddd', 'fill-extrusion-height': 9, 'fill-extrusion-opacity': 0.9}});
         await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style');
         await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {ocean: true, decks: true});
         const has = (id) => rs.map.getLayer(id) != null, names = rs.rows.filter((r) => !r.metadata.group.startsWith('road type')).map((r) => r.name);
         return {default: [has('rs0-ov0-fill'), has('rs0-roads-bridge-decks'), rs.map.getSource('rs0-decks') != null, rs.map.getSource('rs0-ocean') != null],
-                chosen: [has('rs1-ov0-fill'), has('rs1-roads-bridge-decks')], opacity: rs.map.getPaintProperty('rs1-roads-bridge-decks', 'fill-extrusion-opacity'), names};
+                chosen: [has('rs1-ov0-fill'), has('rs1-roads-bridge-decks')], opacity: rs.map.getPaintProperty('rs1-roads-bridge-decks', 'fill-extrusion-opacity'),
+                b3d: rs.map.getPaintProperty('rs1-ov4-3d', 'fill-extrusion-opacity'), names};
     }""")
     assert out["default"] == [False, False, False, False] and out["chosen"] == [True, True] and out["opacity"] == 1
+    assert out["b3d"] == 0.9                                                         # the 3D buildings keep mapstyle's opacity: only the decks are made solid
     assert out["names"].count("ocean") == 1 and out["names"].count("3D bridge decks") == 1
     assert host.errors == []
 
@@ -151,7 +155,7 @@ def test_features_that_the_page_starts_hidden_are_shown(host):
 
 
 def test_three_folders(host):
-    """Background (under the roads), Roads (with the road types) and Features (over the roads), named with the map's name."""
+    """Background (under the roads), Roads (the roads and the road types) and Features (over the roads), named with the map's name."""
     host.evaluate("""async () => {
         const mod = await import('/index.js');
         const st = await (await fetch('/tests/style.json')).json(); st.name = 'monaco';
@@ -159,12 +163,33 @@ def test_three_folders(host):
         st.layers.unshift({id: 'ov0-fill', type: 'fill', source: 's', metadata: {'roadstyle:group': 'water'}, paint: {'fill-color': '#00f'}});
         st.layers.push({id: 'ov5-fill', type: 'fill', source: 's', metadata: {'roadstyle:group': 'crossings'}, paint: {'fill-color': '#000'}});
         await mod.__test.addStyleObject(st, 'a', 'style'); }""")
-    assert host.evaluate("() => rs.groups.map((g) => g.name)") == ["Background (monaco)", "Roads (monaco)", "Features (monaco)", "by type"]
+    assert host.evaluate("() => rs.groups.map((g) => g.name)") == ["Background (monaco)", "Roads (monaco)", "Features (monaco)"]    # no folder inside a folder
     rows = host.evaluate("() => rs.groups.map((g) => g.ids.map((id) => rs.rows.find((r) => r.id === id).name))")
-    assert rows[0] == ["water"] and rows[1] == ["roads"] and rows[2] == ["crossings"] and "bridges" in rows[3]
+    assert rows[0] == ["water"] and rows[2] == ["crossings"]
+    assert "roads" in rows[1] and "bridges" in rows[1] and "tertiary" in rows[1] and "crossings" not in rows[1] and "water" not in rows[1]
     order = host.evaluate("() => rs.map.getStyle().layers.map((l) => l.id).filter((i) => /ov0-fill|rs0-roads$|ov5-fill/.test(i))")
     assert order == ["rs0-ov0-fill", "rs0-roads", "rs0-ov5-fill"]                     # draw order: background, roads, features
+    # the roads row is registered after the type rows: GeoLibre lists the last row on top, so the Roads folder starts with the roads
+    names = host.evaluate("() => rs.rows.map((r) => r.name)")
+    assert names.index("roads") > names.index("bridges")
     assert host.errors == []
+
+
+def test_opacity_of_a_row_fades_its_layers(host):
+    """The slider 'Opacity' of GeoLibre (a row's, and a folder's) reaches the layers: the style's own opacity times the value. An opacity that
+    depends on the zoom is scaled in its stops (MapLibre takes a zoom expression only at the top)."""
+    add_style(host)
+    host.evaluate("() => { window.__maperr = []; rs.map.on('error', (e) => window.__maperr.push(String(e.error && e.error.message))); }")
+    v = host.evaluate("""() => { const row = rs.rows.find((r) => r.name === 'roads'), m = rs.map;
+        const get = () => [m.getPaintProperty('rs0-roads', 'line-opacity'), m.getPaintProperty('rs0-roads-halo', 'line-opacity')];
+        row.paintBridge.setOpacity(0.5); const half = get();
+        row.paintBridge.setOpacity(0.25); const quarter = get();
+        row.paintBridge.setOpacity(1); const back = get();
+        return {half, quarter, back, errors: window.__maperr}; }""")
+    assert v["half"] == [0.5, ["interpolate", ["linear"], ["zoom"], 14, 0.1, 17, 0.5]]
+    assert v["quarter"] == [0.25, ["interpolate", ["linear"], ["zoom"], 14, 0.05, 17, 0.25]]
+    assert v["back"] == [1, ["interpolate", ["linear"], ["zoom"], 14, 0.2, 17, 1]]      # the style's own values again
+    assert v["errors"] == [] and host.errors == []
 
 
 def type_rows(page):

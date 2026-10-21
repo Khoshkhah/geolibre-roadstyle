@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.15.0";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.15.1";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -278,7 +278,7 @@ function arrange(style, opts) {
 }
 function fixExport(style) {
   for (const l of style.layers)        // the 3D bridge decks are drawn at 0.7: the water shows through and the bridges look transparent
-    if (l.type === "fill-extrusion" && l.paint) l.paint["fill-extrusion-opacity"] = 1;
+    if (l.type === "fill-extrusion" && l.paint && groupOf(l) === DECKS) l.paint["fill-extrusion-opacity"] = 1;     // only the decks: the 3D buildings keep mapstyle's 0.9
   return style;
 }
 
@@ -309,6 +309,34 @@ function renameImages(v, own, prefix) {          // in an expression: a string t
   if (typeof v === "string") return v in own ? prefix + v : v;
   return Array.isArray(v) ? v.map((x) => renameImages(x, own, prefix)) : v;
 }
+// The opacity of a row (and of a folder: GeoLibre's slider "Opacity" under a folder name): the opacity properties of its layers, times the value of
+// the slider. The style's own values are kept, so the value 1 puts them back.
+const OPACITY = {fill: ["fill-opacity"], line: ["line-opacity"], circle: ["circle-opacity", "circle-stroke-opacity"], symbol: ["icon-opacity", "text-opacity"],
+  "fill-extrusion": ["fill-extrusion-opacity"], raster: ["raster-opacity"]};
+const baseOpacity = new Map();
+// A value times the opacity. MapLibre takes a zoom expression only at the top of the value (an interpolate or a step), so the factor goes into
+// the outputs of its stops; for any other expression the whole expression is multiplied.
+function scaleOpacity(v, o) {
+  if (typeof v === "number") return v * o;
+  if (Array.isArray(v) && v[0] === "interpolate" && Array.isArray(v[2]) && v[2][0] === "zoom")
+    return v.map((x, i) => (i >= 4 && i % 2 === 0 ? scaleOpacity(x, o) : x));
+  if (Array.isArray(v) && v[0] === "step" && Array.isArray(v[1]) && v[1][0] === "zoom")
+    return v.map((x, i) => (i === 2 || (i >= 4 && i % 2 === 0) ? scaleOpacity(x, o) : x));
+  return ["*", o, v];
+}
+function setOpacity(m, ids, o) {
+  for (const id of ids) {
+    const l = m.getLayer(id);
+    if (!l) continue;
+    for (const prop of OPACITY[l.type] || []) {
+      const key = id + "|" + prop;
+      if (!baseOpacity.has(key)) { const v = m.getPaintProperty(id, prop); baseOpacity.set(key, v == null ? 1 : v); }
+      const b = baseOpacity.get(key);
+      m.setPaintProperty(id, prop, o >= 1 ? b : scaleOpacity(b, o));
+    }
+  }
+}
+
 let prefixN = 0;                       // a prefix is never used twice, also after a map was removed
 async function addStyleObject(style, url, kind = "style", opts = {}) {
   const m = map();
@@ -357,20 +385,8 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
                    .filter((x) => roadGroups.includes(x.g))};
   if (app.registerExternalNativeLayer) {
     const roadsAt = [...groups.keys()].indexOf("roads");
-    [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
-      const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
-      app.registerExternalNativeLayer({
-        id, name: g, type: "vector", nativeLayerIds: ids, sourceIds,
-        opacity: 1, style: {}, metadata: {url, group: g}, visible,
-        paintMode: "plugin",          // roadstyle paints these layers: GeoLibre's style editors do not apply
-        paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))},
-      });
-      // A GeoLibre folder is drawn at the place of its first row. So the layers that the style draws under the roads (ocean, land
-      // cover, water, buildings, railways, parking) go to the folder Background, and the layers over the roads (crossings, signals,
-      // stations, 3D buildings) to the folder Features. The decks are drawn over the roads, but they are part of the Roads folder.
-      (roadGroups.includes(g) ? roadsRows : i < roadsAt ? backgroundRows : featureRows).push(id);
-    });
-    // the road types: a row for each class, bridges and tunnels (a row with no layer of its own: its check box sets the filters)
+    const registerTypes = () => {
+    // the road types: a row for each class, bridges and tunnels (a row with a transparent layer of its own: its check box sets the filters)
     const types = roadTypes(style);
     const typeRow = (key, name, hide) => {
       const id = prefix + "type-" + key;
@@ -393,6 +409,23 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
     for (const c of types.classes.slice().reverse()) typeRow("c-" + c, c, (h) => entry.hidden.classes[h ? "add" : "delete"](c));
     if (types.tunnel) typeRow("tunnel", "tunnels", (h) => { entry.hidden.tunnel = h; });
     if (types.bridge) typeRow("bridge", "bridges", (h) => { entry.hidden.bridge = h; });
+    };
+
+    [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
+      if (g === "roads") registerTypes();                // the road types are registered just before the roads: the Roads folder lists the roads first
+      const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
+      app.registerExternalNativeLayer({
+        id, name: g, type: "vector", nativeLayerIds: ids, sourceIds,
+        opacity: 1, style: {}, metadata: {url, group: g}, visible,
+        paintMode: "plugin",          // roadstyle paints these layers: GeoLibre's style editors do not apply
+        paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none")),
+                      setOpacity: (o) => { setOpacity(m, ids, o); console.info("roadstyle: opacity", g, o); }},
+      });
+      // A GeoLibre folder is drawn at the place of its first row. So the layers that the style draws under the roads (ocean, land
+      // cover, water, buildings, railways, parking) go to the folder Background, and the layers over the roads (crossings, signals,
+      // stations, 3D buildings) to the folder Features. The decks are drawn over the roads, but they are part of the Roads folder.
+      (roadGroups.includes(g) ? roadsRows : i < roadsAt ? backgroundRows : featureRows).push(id);
+    });
     if (app.addLayerGroup) {
       const name = style.name || "map", folder = (title, rows) => {
         if (!rows.length) return null;
@@ -400,18 +433,14 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
         groupIds.push(g);
         return g;
       };
+      // No folder inside a folder: GeoLibre moves a row of the outer folder into the next one when a folder is nested (tested).
       folder("Background", backgroundRows);
-      const roadsFolder = folder("Roads", roadsRows);
+      folder("Roads", typeRows.concat(roadsRows));
       folder("Features", featureRows);
-      if (typeRows.length) {                           // the road types: a folder in the Roads folder
-        const g = app.addLayerGroup("by type", typeRows);
-        groupIds.push(g);
-        if (app.moveLayerGroupToGroup && roadsFolder && g) app.moveLayerGroupToGroup(g, roadsFolder);
-      }
     }
   }
   if (!added.length) { m.on("click", onClick); m.on("mousemove", onMove); }   // the popup stays at its road while the map moves, as on the page
-  entry.rowIds = roadsRows.concat(typeRows, backgroundRows, featureRows);
+  entry.rowIds = typeRows.concat(roadsRows, backgroundRows, featureRows);
   added.push(entry);
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
   const small = style.layers.filter((l) => l.minzoom >= 16 && m.getLayoutProperty(prefix + l.id, "visibility") !== "none");

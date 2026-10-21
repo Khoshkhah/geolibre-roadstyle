@@ -1,17 +1,205 @@
-{"version": 8, "name": "test roads", "center": [18.06, 59.33], "zoom": 14,
- "metadata": {"roadstyle:interaction": {"popup": null, "tooltip": false, "hover_delay_ms": 0}},
+{
+ "version": 8,
+ "name": "test roads",
+ "center": [
+  18.06,
+  59.33
+ ],
+ "zoom": 14,
+ "metadata": {
+  "roadstyle:interaction": {
+   "popup": null,
+   "tooltip": false,
+   "hover_delay_ms": 0
+  }
+ },
  "sources": {
-  "roads": {"type": "geojson", "data": {"type": "FeatureCollection", "features": [
-   {"type": "Feature", "id": 1, "properties": {"name": "<img src=x onerror=\"window.__pwn=1\">", "highway": "residential", "ref": "A&B <b>x</b>", "__rs_bridge": false},
-    "geometry": {"type": "LineString", "coordinates": [[18.05, 59.33], [18.07, 59.33]]}},
-   {"type": "Feature", "id": 2, "properties": {"name": "Bro", "highway": "tertiary", "__rs_bridge": true},
-    "geometry": {"type": "LineString", "coordinates": [[18.05, 59.332], [18.07, 59.332]]}},
-   {"type": "Feature", "id": 3, "properties": {"name": "Stig", "highway": "footway", "__rs_bridge": false},
-    "geometry": {"type": "LineString", "coordinates": [[18.05, 59.334], [18.07, 59.334]]}}]}},
-  "decks": {"type": "geojson", "data": {"type": "FeatureCollection", "features": [
-   {"type": "Feature", "properties": {"highway": "tertiary", "__rs_bridge": true, "__rs_base": 0, "__rs_height": 4, "__rs_fill": "#ffffff"},
-    "geometry": {"type": "Polygon", "coordinates": [[[18.055, 59.3319], [18.065, 59.3319], [18.065, 59.3321], [18.055, 59.3321], [18.055, 59.3319]]]}}]}}},
+  "roads": {
+   "type": "geojson",
+   "data": {
+    "type": "FeatureCollection",
+    "features": [
+     {
+      "type": "Feature",
+      "id": 1,
+      "properties": {
+       "name": "<img src=x onerror=\"window.__pwn=1\">",
+       "highway": "residential",
+       "ref": "A&B <b>x</b>",
+       "__rs_bridge": false
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         18.05,
+         59.33
+        ],
+        [
+         18.07,
+         59.33
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "id": 2,
+      "properties": {
+       "name": "Bro",
+       "highway": "tertiary",
+       "__rs_bridge": true
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         18.05,
+         59.332
+        ],
+        [
+         18.07,
+         59.332
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "id": 3,
+      "properties": {
+       "name": "Stig",
+       "highway": "footway",
+       "__rs_bridge": false
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         18.05,
+         59.334
+        ],
+        [
+         18.07,
+         59.334
+        ]
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "decks": {
+   "type": "geojson",
+   "data": {
+    "type": "FeatureCollection",
+    "features": [
+     {
+      "type": "Feature",
+      "properties": {
+       "highway": "tertiary",
+       "__rs_bridge": true,
+       "__rs_base": 0,
+       "__rs_height": 4,
+       "__rs_fill": "#ffffff"
+      },
+      "geometry": {
+       "type": "Polygon",
+       "coordinates": [
+        [
+         [
+          18.055,
+          59.3319
+         ],
+         [
+          18.065,
+          59.3319
+         ],
+         [
+          18.065,
+          59.3321
+         ],
+         [
+          18.055,
+          59.3321
+         ],
+         [
+          18.055,
+          59.3319
+         ]
+        ]
+       ]
+      }
+     }
+    ]
+   }
+  }
+ },
  "layers": [
-  {"id": "roads-casing", "type": "line", "source": "roads", "filter": ["!=", ["get", "highway"], "none"], "paint": {"line-width": 20, "line-color": "#333"}},
-  {"id": "roads", "type": "line", "source": "roads", "paint": {"line-width": 14, "line-color": "#d33"}},
-  {"id": "roads-bridge-decks", "type": "fill-extrusion", "source": "decks", "paint": {"fill-extrusion-color": "#fff", "fill-extrusion-base": ["get", "__rs_base"], "fill-extrusion-height": ["get", "__rs_height"], "fill-extrusion-opacity": 0.7}}]}
+  {
+   "id": "roads-casing",
+   "type": "line",
+   "source": "roads",
+   "filter": [
+    "!=",
+    [
+     "get",
+     "highway"
+    ],
+    "none"
+   ],
+   "paint": {
+    "line-width": 20,
+    "line-color": "#333"
+   }
+  },
+  {
+   "id": "roads",
+   "type": "line",
+   "source": "roads",
+   "paint": {
+    "line-width": 14,
+    "line-color": "#d33"
+   }
+  },
+  {
+   "id": "roads-halo",
+   "type": "line",
+   "source": "roads",
+   "paint": {
+    "line-width": 3,
+    "line-color": "#fff",
+    "line-opacity": [
+     "interpolate",
+     [
+      "linear"
+     ],
+     [
+      "zoom"
+     ],
+     14,
+     0.2,
+     17,
+     1
+    ]
+   }
+  },
+  {
+   "id": "roads-bridge-decks",
+   "type": "fill-extrusion",
+   "source": "decks",
+   "paint": {
+    "fill-extrusion-color": "#fff",
+    "fill-extrusion-base": [
+     "get",
+     "__rs_base"
+    ],
+    "fill-extrusion-height": [
+     "get",
+     "__rs_height"
+    ],
+    "fill-extrusion-opacity": 0.7
+   }
+  }
+ ]
+}

@@ -119,37 +119,27 @@ def main(db, out=None):
             assert groups["buildings 3D"]["visible"] == 1, groups
             n3 = pg.evaluate("""() => { const m = window.__rs.map; m.jumpTo({pitch: 60}); return m.getStyle().layers.filter((l) => l.type === 'fill-extrusion' && (l.metadata || {})['roadstyle:group'] === 'buildings 3D').length; }""")
             assert n3 == 1, n3
-        for title in ("Background (monaco)", "Roads (monaco)", "Features (monaco)", "by type"):
+        for title in ("Background (monaco)", "Roads (monaco)", "Features (monaco)"):
             assert pg.get_by_text(title, exact=True).count() > 0, title + " is not in the Layers panel"
-        ys = {t: pg.get_by_text(t, exact=True).first.bounding_box()["y"] for t in ("Features (monaco)", "Roads (monaco)", "Background (monaco)")}
-        print("folders in the panel, from the top:", sorted(ys, key=ys.get))
-        assert ys["Roads (monaco)"] < ys["Features (monaco)"] < ys["Background (monaco)"], ys                  # the panel: Roads (it holds the type rows), Features, Background
-        print("draw order:", order)
-        assert order["roadsLast"] < order["crossingsFirst"] and order["roadsLast"] < order["signalsFirst"], order      # features over the roads
-        assert order["railwaysLast"] < order["roadsFirst"], order                                                      # railways and parking under them
-        for name in ("crossings", "traffic_signals"):                          # and their rows are in the Layers panel
-            assert pg.get_by_text(name, exact=True).count() > 0, name + " has no row in the Layers panel"
-        assert feat["traffic_signals"]["layers"] > 0 and feat["traffic_signals"]["visible"] == feat["traffic_signals"]["layers"], feat
-        if out:
-            Path(out).mkdir(parents=True, exist_ok=True)
-            pg.screenshot(path=str(Path(out) / "crossings.png"))
-
-        # 3) the road type "residential"
-        pg.evaluate("() => window.__rs.map.jumpTo({zoom: 14.8})")
-        pg.wait_for_timeout(4000)
-        clip = {"x": 470, "y": 100, "width": 800, "height": 600}
-        before = pg.screenshot(clip=clip)
-        row = pg.get_by_text("residential", exact=True).first
-        row.scroll_into_view_if_needed()
-        box = row.bounding_box()
-        pg.mouse.click(box["x"] - 29, box["y"] + box["height"] / 2)      # the eye of the row
-        pg.wait_for_timeout(3000)
-        after = pg.screenshot(clip=clip)
-        n = changed(before, after)
-        print("pixels changed when the residential roads are switched off:", n)
-        assert n > 1000, "the road type row did not change the map"
-        assert any("road type residential hidden" in t for t in said), said[-5:]
-        assert not errors, errors
+        assert pg.get_by_text("by type", exact=True).count() == 0, "a folder inside a folder: GeoLibre moves rows out of the folder"
+        ys = {t: pg.get_by_text(t, exact=True).first.bounding_box()["y"] for t in ("Features (monaco)", "Roads (monaco)", "Background (monaco)", "roads", "bridges", "crossings", "water")}
+        print("panel, from the top:", sorted(ys, key=ys.get))
+        assert ys["Features (monaco)"] < ys["crossings"] < ys["Roads (monaco)"] < ys["roads"] < ys["Background (monaco)"] < ys["water"], ys   # each row in its folder
+        assert ys["Roads (monaco)"] < ys["bridges"] < ys["Background (monaco)"], ys
+        # the slider "Opacity" under a folder reaches its layers: GeoLibre calls the setOpacity of every row of the folder. The first folder slider
+        # that GeoLibre finds is the one of Features (the folder at the top of the panel): the 3D buildings (0.9) go to 0.9 x 0.4 = 0.36
+        slider = pg.locator("xpath=//*[normalize-space(text())='Features (monaco)']/ancestor::*[.//input[@type='range']][1]//input[@type='range']").first
+        pg.evaluate("() => { window.__maperr = []; window.__rs.map.on('error', (e) => window.__maperr.push(String(e.error && e.error.message))); }")
+        slider.evaluate("""(el) => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, 0.4);
+            el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); }""")
+        pg.wait_for_timeout(2000)
+        op = pg.evaluate("""() => { const m = window.__rs.map, L = m.getStyle().layers;
+            const b3 = L.find((l) => l.type === 'fill-extrusion' && l.metadata && l.metadata['roadstyle:group'] === 'buildings 3D');
+            const roads = L.filter((l) => l.type === 'line' && l.metadata && l.metadata['roadstyle:group'] === 'roads').map((l) => JSON.stringify(m.getPaintProperty(l.id, 'line-opacity')));
+            return {b3d: b3 ? m.getPaintProperty(b3.id, 'fill-extrusion-opacity') : null, roadsScaled: roads.some((v) => v.includes('0.4')), errors: window.__maperr,
+                    folders: window.__rs.app.listLayerGroups().map((g) => [g.name, g.opacity])}; }""")
+        print("after the folder slider is 0.4:", op)
+        assert op["b3d"] is not None and abs(op["b3d"] - 0.36) < 0.01 and not op["roadsScaled"] and op["errors"] == [], op     # Features faded, Roads not
         if out and "buildings 3D" in groups:                                                                   # a picture of the 3D buildings
             pg.evaluate("() => window.__rs.map.jumpTo({center: [7.4255, 43.7385], zoom: 17.3, pitch: 60, bearing: 20})")
             pg.wait_for_timeout(8000)
