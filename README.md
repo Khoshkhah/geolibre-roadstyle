@@ -1,5 +1,10 @@
 # roadstyle for GeoLibre
 
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.14.1)
+>
+> In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**, choose the `.zip`, then **Plugins › Installed › roadstyle**.
+> The same file is in this repo as [`dist/roadstyle-geolibre.zip`](dist/roadstyle-geolibre.zip). All versions: [Releases](https://github.com/Khoshkhah/geolibre-roadstyle/releases).
+
 A [GeoLibre](https://web.geolibre.app) plugin that draws roads in roadstyle's look (casings, drawing positions, tunnels,
 bridge decks), with the roads' data, over GeoLibre's own base map. One plain ES module, no build step.
 
