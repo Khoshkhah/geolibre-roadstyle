@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: S0 to S4 and S6 are done, and the three conditions of the decision are answered (2026-10-22). Next: the full port, if you decide so.
+Status: the spike is done (S0 to S6, the three conditions). Step 1 of the full port (the worker) is done (2026-10-22). Step 2 (the layers) is next.
 
 ## Question
 
@@ -433,3 +433,55 @@ All three conditions of the decision are answered:
 
 Open, not decided by the spike: who keeps the Rust copy equal to roadstyle and mapstyle after each release (the golden test finds a difference, someone
 must port it), and which duckdb-wasm dev build to pin.
+
+## Full port, step 1: the worker, plan (2026-10-22)
+
+**Goal.** A worker that takes the `.duckdb` file and gives the style, with no Python: duckdb-wasm reads the file and builds the roads table in SQL,
+the Rust module makes the style from it. The layers and the look still come from Python at build time (`layers.json`, `look.json`), as in the spike.
+The base-map layers, the planner data and the 3D decks are later steps. The worker stays in `spike/` until the port can replace `py/worker.js`.
+
+**The roads table in SQL.** What Python does between the database and roadstyle, as SQL that a JavaScript builder writes for the file it opens:
+
+| Python (mapstyle, roadstyle) | In SQL |
+|---|---|
+| `_roads_union`: every mode's `edges` and `private_edges`, the optional columns of each (it reads `information_schema`) | the same builder in JavaScript (`roads_sql.js`), on the attached catalog |
+| `load_roads`: one row per `edge_id`, then the undirected edges first (stable) | the same statement, then `ORDER BY NOT und, eid` |
+| `stored_levels` (`load_area_levels`): `visualization.edge_levels` joined on `edge_id`; an error if the levels are not from a level area or were solved for other edges | `LEFT JOIN`, and the checks: `edge_levels_meta.source = 'area'`, the count, every edge has a row (the hash of the ids: later) |
+| `_access` (mode `all`), `_is_directed`, `has_arrows` | expressions on the joined row |
+
+**Checks.**
+1. The Parquet file the browser writes equals `spike/data/roads.parquet` (from Python): the same rows in the same order, compared natively in DuckDB.
+2. The style of the worker equals the golden files: layers and `roads` with tolerance 0, `simple` and `slots` within one rounding step.
+3. The time of each stage in the worker (start of duckdb-wasm, attach, SQL, Rust) against today's Pyodide numbers.
+
+duckdb-wasm is pinned to `1.33.1-dev57.0` (DuckDB 1.5.4), the build the input probe checked.
+
+## Full port, step 1: result (2026-10-22)
+
+**The worker makes the map of the `.duckdb` file with no Python.** `spike/worker/`: `roads_sql.js` (the roads table in SQL, about 80 lines),
+`worker.js` (duckdb-wasm and the Rust module), `index.html` and `run_browser.py` (the check in headless Chromium).
+
+| Check | Result |
+|---|---|
+| 1. The roads table from SQL in the browser against `roads.parquet` from Python | **Equal**: 13,298 rows, 27 columns, the same order |
+| 2. Layers and `roads` against `golden.json` | **Equal**, tolerance 0 |
+| 2. `simple` against `golden.json` | **Equal** within 2e-7 (one rounding step) |
+| 2. `slots` against `golden_slots.json` | **Equal** within 1e-6 (one rounding step) |
+
+The level checks of `load_area_levels` are in the SQL builder too: the stored levels must be from a level area, and the number and the hash of the edge ids
+must be the ones they were solved for (SHA-256 with WebCrypto, as `_hash`). A file without them stops with a message: run `duckosm levels`.
+
+Times in the worker (Chromium, Monaco, two runs; duckdb-wasm from jsdelivr with a cold cache):
+
+| Stage | ms |
+|---|---|
+| Start duckdb-wasm (at the same time as the Rust module, 26 ms) | 510 to 525 |
+| Attach the file | 35 to 42 |
+| The roads table in SQL, with the checks, to Parquet | 636 to 645 |
+| The Rust module: roads, pieces, names and arrows, JSON | 1,437 to 1,641 |
+| **Total in the worker** | **2,687 to 2,896** |
+| The page has the style | 3,010 to 3,182 |
+
+Today the plugin needs about 18 s for the first open of Monaco (the guide): 6 s to start Python and 10 s to make the map, with the names and arrows 10 s later.
+The worker's 3 s do not yet include the base-map layers, the planner data and the 3D decks (steps 3 to 5), or the layers in Rust (step 2: they come from
+`layers.json` here).

@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rs worker</title>
+<script type="module">
+  // Step 1 of the full port: give the worker the file, the look and the layers, as the plugin will; keep the result in window.__result
+  const t0 = performance.now();
+  const w = new Worker("worker.js", {type: "module"});
+  w.onerror = (e) => { window.__result = {error: "worker: " + (e.message || "could not start")}; };
+  w.onmessage = ({data}) => {
+    window.__result = {...data, parquet: data.parquet ? Array.from(data.parquet) : null, pageMs: Math.round(performance.now() - t0)};
+  };
+  const [db, look, layers] = await Promise.all([
+    fetch("map.duckdb").then((r) => r.arrayBuffer()),
+    fetch("look.json").then((r) => r.text()),
+    fetch("layers.json").then((r) => r.text()),
+  ]);
+  w.postMessage({db, look, layers}, [db]);
+</script>
+<p>making the map…</p>
