@@ -22,7 +22,7 @@
 The plugin draws roads with casings, bridges, tunnels and one-way arrows, with 3D buildings and base-map layers, over GeoLibre's own map. The map
 is made in the browser from a duckOSM database or a style file. No server is needed.
 
-> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.19.2)
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.20.0)
 >
 > 1. In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**. Choose the `.zip`.
 > 2. **Plugins › Installed › roadstyle** makes the plugin active.
@@ -32,19 +32,29 @@ is made in the browser from a duckOSM database or a style file. No server is nee
 
 1. Download the finished database: [monaco.duckdb](https://github.com/Khoshkhah/duckOSM/releases/download/v0.6.0/monaco.duckdb) (38 MB).
 2. Menu **roadstyle › Open a duckOSM database…**. Choose the file, then **Open**.
-3. The first time takes about 30 seconds (the plugin loads Python in the browser; it starts while you choose the file). Then the map of Monaco is on the screen. The next time you open the same file with the same choices, the map comes from the browser's storage and takes about 4 seconds.
+3. The first time takes about 30 seconds (the plugin loads Python in the browser; it starts while you choose the file). Then the map of Monaco is on the screen. The map is on the screen after about 18 seconds, and the street names and the one-way arrows follow a few seconds later (they are made in the background). The next time you open the same file with the same choices, the map comes from the browser's storage and takes about 3 seconds. If you used the plugin before, Python starts by itself a few seconds after GeoLibre opens.
 
 ## Input data
 
 | Menu item | Input | How to make it |
 |---|---|---|
 | **Open a duckOSM database…** | a `.duckdb` file | `pip install duckosm`, then `duckosm build --config <area>.yaml`. Or use the Monaco file above. [duckOSM](https://github.com/Khoshkhah/duckOSM) |
-| **Add a roadstyle layer…** | the URL of a `style.json` | see below |
+| **Add a roadstyle layer…** | a `style.json` file from your disk (the fast way) or its URL | see below |
 | **Style a layer with roadstyle…** | a data layer in GeoLibre and a look (optional) | see below |
 
 The link `https://web.geolibre.app/?roadstyle=<URL of a style.json>` draws a style when GeoLibre starts (the plugin must be active).
 
-**A `style.json` with the data inside** (small areas):
+**The fast way: make the style file once, with Python.**
+
+```bash
+pip install mapstyle
+mapstyle monaco.duckdb --inline monaco.json --planner      # 6 seconds; --planner adds the data of the route planner
+```
+
+In GeoLibre: **roadstyle › Add a roadstyle layer…**, choose `monaco.json`. The map opens in about **1 second**, also for a big area. Opening the `.duckdb` file
+itself makes the same file in the browser, where Python is about 3 times slower: the map is on the screen after about 18 seconds for Monaco, with the street names and arrows added about 10 seconds later (the next time you open the same file, the browser has kept the result).
+
+**A `style.json` with the data inside** (the same file, from Python):
 
 ```python
 import json
@@ -68,18 +78,26 @@ Put the files on a server with **https** and **CORS** (GitHub Pages works). GeoL
 ## Route planner
 
 The plugin has the route planner of [duckOSM](https://github.com/Khoshkhah/duckOSM) (`duckosm route-map`), with the same panel. Open a database with
-**Route planner: on** (the default). The panel opens at the right of the map, with a route:
+**Route planner: on** (the default). The panel opens at the right of the map, with a route from a start (A) to an end (B):
+
+<p align="center"><img src="docs/img/route-planner.jpg" alt="The route planner of roadstyle in GeoLibre: the panel with the time, the length and the steps, and the route on the map" width="860"></p>
 
 - **Drag the two pins** (A start, B end). The route changes at once.
 - **Walk, Cycle, Drive, Walk + drive**, and **Fastest** or **Shortest**.
 - The summary shows the time and the length, with a bar for each leg. The steps are turn by turn: a click on a step zooms the map to it.
 - Click a road to keep its `edge_id` in the panel.
 - The route is a row **route** in the Layers panel: switch it off there.
-- In **full screen** the panel is a box over the map (the tab "Route planner" hides and shows it), and it goes back to the side panel when you leave full screen.
-- The menu item **roadstyle › Route planner** opens the panel again. **Remove roadstyle layers** closes it.
+
+**Back to the normal map.** Close the panel (the × in its header): the pins and the route go, and the map stays as it was. The menu item
+**roadstyle › Route planner** opens the panel again, and the route comes back. **Remove roadstyle layers** removes the whole map.
+
+**Full screen.** GeoLibre's full screen shows only the map, so the panel becomes a box over the map. The tab "Route planner" hides and shows the box (hiding it also
+leaves routing mode). When you leave full screen, the panel goes back to the side panel.
+
+<p align="center"><img src="docs/img/route-planner-fullscreen.jpg" alt="The route planner in GeoLibre's full screen: the panel is a box over the map" width="860"></p>
 
 The graphs are in the page, so the planner works for areas up to 150,000 roads. A bigger database opens without it. For a style file, make it with
-`export_inline(db, planner=True)`.
+`mapstyle monaco.duckdb --inline monaco.json --planner` or `export_inline(db, planner=True)`.
 
 ## The Layers panel
 
@@ -109,8 +127,9 @@ Each map has three folders. The first is on top, and it is drawn last.
 ## Needs
 
 - A browser with enough memory: the `.duckdb` file is read into memory twice.
-- The network: the plugin loads Pyodide from `cdn.jsdelivr.net` and two small packages (`folium`, `branca`) from PyPI. The roadstyle and mapstyle
-  code is in the plugin (roadstyle 0.24.2, mapstyle 0.11.0).
+- The network: the plugin loads Pyodide and its packages (numpy, pandas, shapely, geopandas, DuckDB and a few more) from `cdn.jsdelivr.net`, a pinned version (Pyodide 314.0.7).
+  Nothing is installed from PyPI at run time: the roadstyle, mapstyle and branca code is inside the plugin (roadstyle 0.24.2, mapstyle 0.12.0, branca 0.8.2). The code of the zip is
+  minified; the readable source is in this repository.
 
 ## Build and test
 

@@ -82,7 +82,8 @@ def test_the_zip_in_dist_is_current():
     z = zipfile.ZipFile(root / "dist" / "roadstyle-geolibre.zip")
     assert z.read("README.md").decode() == (root / "README.md").read_text(), "the README in the zip is old: python build.py --zip"
     assert z.read("plugin.json").decode() == (root / "plugin.json").read_text()
-    assert re.search(r'const VERSION = "([^"]+)"', z.read("index.js").decode())[1] == json.loads((root / "plugin.json").read_text())["version"]
+    version = json.loads((root / "plugin.json").read_text())["version"]
+    assert f'"{version}"' in z.read("index.js").decode(), "the version in the zip's index.js is not the one of plugin.json"        # the zip's code is minified: its names are short
 
 
 def test_menu(host):
@@ -112,7 +113,7 @@ def test_add_dialog_and_remove(host):
     assert host.query_selector("[role=dialog]") is None
     assert host.evaluate("() => rs.map.getStyle().layers.length") == n
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'add').onSelect()")
-    host.fill("[role=dialog] input", f"{host.base}/tests/style.json")
+    host.fill("[role=dialog] input[type=url]", f"{host.base}/tests/style.json")
     host.keyboard.press("Enter")
     host.wait_for_function("(n) => rs.map.getStyle().layers.length > n", arg=n, timeout=10000)
     assert host.evaluate("() => rs.rows.length") >= 1
@@ -124,7 +125,7 @@ def test_add_dialog_and_remove(host):
 
 def test_bad_url_is_a_message_not_a_crash(host):
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'add').onSelect()")
-    host.fill("[role=dialog] input", f"{host.base}/tests/no-such-file.json")
+    host.fill("[role=dialog] input[type=url]", f"{host.base}/tests/no-such-file.json")
     host.keyboard.press("Enter")
     host.wait_for_selector("[role=alert]", timeout=10000)
     assert "404" in host.inner_text("[role=alert]")

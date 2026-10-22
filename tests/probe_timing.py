@@ -51,6 +51,8 @@ def main(db, planner="on"):
             # the map is drawn: MapLibre idle
             pg.wait_for_function("() => window.__rs.map.loaded()", timeout=300000)
             steps.append((round(time.time() - t0, 1), "map idle (all data on the screen)"))
+            pg.wait_for_function("() => window.__rs.map.getStyle().layers.some((l) => /roads-arrows$/.test(l.id))", timeout=240000)
+            steps.append((round(time.time() - t0, 1), "street names and arrows added"))
             for t, s in steps:
                 print(f"{t:7.1f} s  {s}")
             print("planner:", planner, "| total", steps[-1][0], "s")

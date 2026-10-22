@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.19.2";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.20.0";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -182,9 +182,9 @@ function roadAt(m, point) {
 
 // The page's road popup and hover (its popup.css / popup.js and its settings, style metadata roadstyle:interaction): the click
 // selects a road (feature-state select) and opens its popup; resting the mouse on a road for the page's delay lights it up
-// (feature-state hover) and shows its tooltip, when the page has one.
+// (feature-state hover). The page's tooltip is not shown: in GeoLibre it stayed open.
 let rsUI = null;                     // {inter, rfields, POPUP}
-let selected = null, tip = null, tipTimer = 0, tipKey = null;
+let selected = null, tipTimer = 0, tipKey = null;
 async function loadUI(inter) {
   if (rsUI || !inter) return;
   inter = {css: asset("popup.css"), js: asset("popup.js"), ...inter};
@@ -231,22 +231,17 @@ function onClick(e) {
   if (f && rsUI && rsUI.inter.popup !== false)
     popup = makePopup(m, e.lngLat, rsUI.rfields(f.properties, "highway" in f.properties ? rsUI.inter.popup : ["name", "kind"]), {close: true});
 }
-function onMove(e) {
+function onMove(e) {                                        // no tooltip (it stayed open and annoyed): the road under the mouse only lights up
   const m = map();
   if (!m) return;
   const f = roadAt(m, e.point), k = fid(f), key = k ? k.source + "|" + k.id : null;
   m.getCanvas().style.cursor = f ? "pointer" : "";
   if (key !== tipKey) {                                     // another road, or none: the last one off at once
     setState(m, hover, {hover: false}); hover = null;
-    if (tip) { tip.remove(); tip = null; }
     clearTimeout(tipTimer); tipKey = key;
     if (!k) return;
-    tipTimer = setTimeout(() => {                           // the mouse rested on it: light it up
-      hover = k; setState(m, hover, {hover: true});
-      const t = rsUI && rsUI.inter.tooltip;
-      if (t) tip = makePopup(m, e.lngLat, rsUI.rfields(f.properties, Array.isArray(t) ? t : null), {className: "rs-tip", offset: rsUI.POPUP.tipOffset});
-    }, rsUI ? rsUI.inter.hover_delay_ms : 0);
-  } else if (tip) tip.setLngLat(e.lngLat);                  // lit: its tooltip follows the mouse along the road
+    tipTimer = setTimeout(() => { hover = k; setState(m, hover, {hover: true}); }, rsUI ? rsUI.inter.hover_delay_ms : 0);     // the mouse rested on it: light it up
+  }
 }
 
 async function addImages(m, images) {   // {name: data URL, or {url, sdf, pixelRatio}}
@@ -358,6 +353,19 @@ function setOpacity(m, ids, o) {
 }
 
 let prefixN = 0;                       // a prefix is never used twice, also after a map was removed
+// One layer of a style on the map, under the map's prefix (its source, its image names, the base map's font). Returns its id.
+function addStyleLayer(m, l, prefix, own, font, before) {
+  const layout = {...(l.layout || {})};
+  if (layout["text-font"] && font) layout["text-font"] = font;
+  const paint = l.paint ? {...l.paint} : undefined;
+  for (const k of IMAGE_PROPS) {                                   // the image names of the layer, with the prefix (strings, and strings in expressions)
+    if (typeof layout[k] === "string") layout[k] = prefix + layout[k];
+    else if (k in layout) layout[k] = renameImages(layout[k], own, prefix);
+    if (paint && k in paint) paint[k] = typeof paint[k] === "string" ? prefix + paint[k] : renameImages(paint[k], own, prefix);
+  }
+  m.addLayer({...l, id: prefix + l.id, source: prefix + l.source, layout, ...(paint ? {paint} : {})}, before);
+  return prefix + l.id;
+}
 async function addStyleObject(style, url, kind = "style", opts = {}) {
   const m = map();
   if (!m) throw new Error("roadstyle: GeoLibre has no MapLibre map (the plugin needs the MapLibre renderer)");
@@ -378,18 +386,7 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
     m.addSource(prefix + id, src);
     sourceIds.push(prefix + id);
   }
-  for (const l of style.layers) {
-    const layout = {...(l.layout || {})};
-    if (layout["text-font"] && font) layout["text-font"] = font;
-    const paint = l.paint ? {...l.paint} : undefined;
-    for (const k of IMAGE_PROPS) {                                   // the image names of the layer, with the prefix (strings, and strings in expressions)
-      if (typeof layout[k] === "string") layout[k] = prefix + layout[k];
-      else if (k in layout) layout[k] = renameImages(layout[k], own, prefix);
-      if (paint && k in paint) paint[k] = typeof paint[k] === "string" ? prefix + paint[k] : renameImages(paint[k], own, prefix);
-    }
-    m.addLayer({...l, id: prefix + l.id, source: prefix + l.source, layout, ...(paint ? {paint} : {})});
-    layerIds.push(prefix + l.id);
-  }
+  for (const l of style.layers) layerIds.push(addStyleLayer(m, l, prefix, own, font));
   // one GeoLibre row per group of the style (metadata roadstyle:group: "roads", or a base-map layer's name), in one folder,
   // so each can be switched on and off; a group starts as the style has it (a layer hidden in the page starts hidden)
   const groups = new Map();
@@ -400,7 +397,7 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
   });
   const roadsRows = [], featureRows = [], backgroundRows = [], typeRows = [], groupIds = [];
   const roadGroups = ["roads", DECKS];                  // the roads and their decks: the road types filter both
-  const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, imageIds: Object.keys(images).concat(spriteImages), hidden: {classes: new Set(), bridge: false, tunnel: false}, op: {classes: new Map(), bridge: 1, tunnel: 1},
+  const entry = {url, kind, prefix, opts, layerIds, sourceIds, groupIds, imageIds: Object.keys(images).concat(spriteImages), hidden: {classes: new Set(), bridge: false, tunnel: false}, op: {classes: new Map(), bridge: 1, tunnel: 1},
                  roadLayers: style.layers.map((l, i) => ({id: layerIds[i], filter: l.filter || null, g: groupOf(l)}))
                    .filter((x) => roadGroups.includes(x.g))};
   if (app.registerExternalNativeLayer) {
@@ -458,7 +455,7 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
       };
       // No folder inside a folder: GeoLibre moves a row of the outer folder into the next one when a folder is nested (tested).
       folder("Background", backgroundRows);
-      folder("Roads", typeRows.concat(roadsRows));
+      entry.roadsGroup = folder("Roads", typeRows.concat(roadsRows));
       folder("Features", featureRows);
     }
   }
@@ -471,7 +468,39 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
   const meta = style.metadata || {};
   if (meta["roadstyle:planner"]) await setupPlanner(entry, meta["roadstyle:planner"], kind);
   else if (meta["roadstyle:planner_skipped"]) notify("The database has " + meta["roadstyle:planner_skipped"] + " roads: too many for the route planner in the browser.", "warn");
+  return entry;
 }
+// The street names and the one-way arrows are two thirds of the work of making a map, so Python makes them after the first picture
+// (mapstyle's export_inline arrows=False, labels=False, then the whole style again): they come as extra layers, in a row "names and arrows" of the Roads folder.
+async function addAnnotations(entry, ex) {
+  const m = map();
+  if (!m || !added.includes(entry)) return;                          // the map was removed meanwhile
+  const prefix = entry.prefix, tmp = {layers: ex.layers, sources: ex.sources, metadata: {}};
+  arrange(tmp, entry.opts || {});
+  fixExport(tmp);
+  const own = ex.images || {};
+  await addImages(m, Object.fromEntries(Object.entries(own).map(([n, v]) => [prefix + n, v])));
+  for (const [id, src] of Object.entries(tmp.sources)) if (!m.getSource(prefix + id)) { m.addSource(prefix + id, src); entry.sourceIds.push(prefix + id); }
+  Object.keys(own).forEach((n) => entry.imageIds.push(prefix + n));
+  const font = baseFont(m), ids = [];
+  for (const l of tmp.layers) {
+    const before = ex.before[l.id] && m.getLayer(prefix + ex.before[l.id]) ? prefix + ex.before[l.id] : undefined;
+    const id = addStyleLayer(m, l, prefix, own, font, before);
+    ids.push(id); entry.layerIds.push(id);
+    if (roadGroupsOf(l)) entry.roadLayers.push({id, filter: l.filter || null, g: groupOf(l)});
+  }
+  setRoadFilters(m, entry); setRoadOpacity(m, entry);                 // the road types that are switched off, and the opacity, apply to them too
+  if (app.registerExternalNativeLayer && ids.length) {
+    const rowId = prefix + "annotations";
+    app.registerExternalNativeLayer({id: rowId, name: "names and arrows", type: "vector", nativeLayerIds: ids, sourceIds: [], opacity: 1, style: {}, metadata: {url: entry.url, group: "names and arrows"},
+      visible: true, paintMode: "plugin",
+      paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))}});
+    entry.rowIds.push(rowId);
+    if (app.moveLayersToGroup && entry.roadsGroup) try { app.moveLayersToGroup([rowId], entry.roadsGroup); } catch (e) { console.warn("roadstyle: the row of the names and arrows stays outside the Roads folder:", e); }
+  }
+  console.info("roadstyle: the street names and the arrows are on the map");
+}
+const roadGroupsOf = (l) => ["roads", DECKS].includes(groupOf(l));
 
 // ---- the route planner: the panel of `duckosm route-map` (docs/design/routing.md). planner/planner.js and its panel are made from duckOSM's template by
 // tools/make_planner.py, so the plugin shows the same panel. The data (mapstyle's planner_data) is in the style's metadata roadstyle:planner.
@@ -536,7 +565,7 @@ async function setupPlanner(entry, RM, kind) {
   const TOP = ["rm-radius-fill", "rm-radius-line", "rm-route-casing", "rm-route", "rm-access"];
   planner.keep = () => {                             // GeoLibre can move layers or load a new base map: the route stays over them, or is drawn again
     try {
-      if (!m.getSource("rm-route")) planner.mounted.restore();
+      if (!m.getSource("rm-route")) { planner.mounted.restore(); if (!planner.active) TOP.forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", "none")); }
       else if (m.getStyle().layers.slice(-TOP.length).map((l) => l.id).join() !== TOP.join()) TOP.forEach((id) => m.getLayer(id) && m.moveLayer(id));
     } catch (e) { console.warn("roadstyle: the route layers could not be kept on top:", e); }
   };
@@ -551,8 +580,16 @@ async function setupPlanner(entry, RM, kind) {
     });
   }
   // where the panel goes: GeoLibre's right panel; else a floating panel; else a box of our own over the map (an older GeoLibre has neither call)
-  const panel = {id: planner.id, title: "Route planner", defaultWidth: 380,
-                 render: (container) => { planner.container = container; container.appendChild(root); return () => { planner.container = null; holder.appendChild(root); }; }};
+  // Routing mode is on while the panel is open. When the user closes the panel, the pins, the route and the radius go, and the normal map is left;
+  // when the panel opens again, they come back (the route layers' row in the Layers panel has its own check box besides).
+  planner.active = true;
+  planner.setActive = (on) => {
+    if (!planner || planner.active === on) return;
+    planner.active = on;
+    try { planner.mounted.setVisible(on); TOP.forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", on ? "visible" : "none")); } catch (e) { console.warn("roadstyle:", e); }
+  };
+  const panel = {id: planner.id, title: "Route planner", defaultWidth: 380, onOpen: () => planner && planner.setActive(true), onClose: () => planner && planner.setActive(false),
+                 render: (container) => { const me = planner; if (me) me.container = container; container.appendChild(root); return () => { if (me) me.container = null; holder.appendChild(root); }; }};
   let how = null;
   if (app.registerRightPanel && app.openRightPanel) {
     try { planner.unregister = app.registerRightPanel({...panel, dock: "right-of-style"}); planner.open = () => app.openRightPanel(panel.id); how = "right panel"; }
@@ -567,9 +604,9 @@ async function setupPlanner(entry, RM, kind) {
     box.style.cssText = "position:fixed;top:60px;right:12px;bottom:12px;width:380px;max-width:92vw;z-index:1500;overflow:auto;background:Canvas;color:CanvasText;border-radius:12px;box-shadow:0 8px 30px #0005";
     bar.style.cssText = "position:sticky;top:0;text-align:right;padding:4px 8px;z-index:1;background:Canvas";
     bar.innerHTML = '<button type="button" aria-label="Close" style="border:0;background:none;font-size:20px;cursor:pointer;color:inherit">\u00d7</button>';
-    bar.firstChild.onclick = () => { box.hidden = true; };
+    bar.firstChild.onclick = () => { box.hidden = true; planner.setActive(false); };
     box.append(bar, root); document.body.appendChild(box);
-    planner.unregister = () => box.remove(); planner.open = () => { box.hidden = false; }; how = "box over the map";
+    planner.unregister = () => box.remove(); planner.open = () => { box.hidden = false; planner.setActive(true); }; how = "box over the map";
   }
   // Full screen: GeoLibre makes the map element itself full screen, and its side panels are not on the screen. The planner moves into a box over the
   // map (with a tab that hides and shows it), and moves back when the full screen ends.
@@ -579,14 +616,14 @@ async function setupPlanner(entry, RM, kind) {
   fsBar.innerHTML = '<button type="button" aria-label="Hide the route planner" style="border:0;background:none;font-size:20px;cursor:pointer;color:inherit">\u00d7</button>';
   fsTab.type = "button"; fsTab.textContent = "Route planner"; fsTab.hidden = true;
   fsTab.style.cssText = "position:absolute;top:12px;right:12px;z-index:1500;padding:6px 12px;border-radius:8px;border:1px solid #8886;background:Canvas;color:CanvasText;cursor:pointer;font:inherit";
-  fsBar.firstChild.onclick = () => { fsBox.hidden = true; fsTab.hidden = false; };
-  fsTab.onclick = () => { fsBox.hidden = false; fsTab.hidden = true; };
+  fsBar.firstChild.onclick = () => { fsBox.hidden = true; fsTab.hidden = false; planner.setActive(false); };
+  fsTab.onclick = () => { fsBox.hidden = false; fsTab.hidden = true; planner.setActive(true); };
   planner.fs = () => {
     const fe = document.fullscreenElement;
     if (fe && fe.contains(m.getContainer()) && !fe.contains(root)) {
       fsBox.hidden = false; fsTab.hidden = true; fsBox.append(fsBar, root); fe.append(fsBox, fsTab);
     } else if (!fe && fsBox.isConnected) {
-      fsBox.remove(); fsTab.remove(); (planner.container || holder).appendChild(root);
+      fsBox.remove(); fsTab.remove(); (planner.container || holder).appendChild(root); planner.setActive(true);
     }
   };
   document.addEventListener("fullscreenchange", planner.fs);
@@ -730,6 +767,7 @@ function asset(f) {
 
 // A duckOSM database from your disk: roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a
 // worker, py/worker.js; no server, no export), so it is the map of their pages; the plugin adds the style it makes as rows.
+let warmTimer = 0;
 let pyWorker = null, pyReady = false, working = null;      // working: {cancel} while a map is being made
 function stopWorker() {
   if (pyWorker) pyWorker.terminate();
@@ -766,22 +804,27 @@ const IDB = {
     });
   },
 };
+// Makes the style of a database. Returns {style, extra}: the style to draw now, and (a promise, or null) the street names and arrows that come later.
 function makeStyle(file, box, opts) {
   return new Promise(async (done, fail_) => {
     working = {cancel: () => { stopWorker(); fail_(new Error("cancelled")); }};      // Cancel works from the first moment
     try {
       const key = [VERSION, file.name, file.size, file.lastModified, opts.mode, opts.theme, opts.paths, opts.planner !== "off"].join("|");
       const cached = await IDB.get(key).catch(() => undefined);
-      if (cached) { box.say("the map from the browser's storage"); return done(cached); }
+      if (cached) { box.say("the map from the browser's storage"); return done({style: cached, extra: null}); }
       if (!pyReady) box.say("loading Python, roadstyle and mapstyle (the first time about 30 s)");
       const w = await ensureWorker(), msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, ""),
-                                 opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths, planner: opts.planner !== "off"}};
+                                 opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths, planner: opts.planner !== "off", split: true}};
       if (!pyReady) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();     // until the worker said it is ready
+      let gotExtra;
+      const extra = new Promise((ok) => { gotExtra = ok; });
       w.onmessage = ({data}) => {
         if (data.step) box.say(data.step);
         else if (data.ready) pyReady = true;
         else if (data.error) { if (!pyReady) stopWorker(); fail_(new Error("the map of " + file.name + " failed: " + data.error)); }
-        else { IDB.put(key, data.style).catch(() => false); done(data.style); }       // kept for the next time (not a problem if the storage is full)
+        else if (data.extraError) { console.warn("roadstyle: the street names and arrows failed:", data.extraError); gotExtra(null); }
+        else if (data.extra) { IDB.put(key, data.full).catch(() => false); gotExtra(JSON.parse(data.extra)); }       // the whole style is kept for the next time
+        else done({style: data.style, extra});
       };
       w.onerror = (e) => { stopWorker(); fail_(new Error("the Python worker failed: " + (e.message || "it could not start"))); };
       w.postMessage(msg, [msg.db, ...(msg.pkgs ? [msg.pkgs] : [])]);
@@ -806,11 +849,13 @@ const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", ocean: "off", d
 async function runDatabase(file, opts) {
   const box = progress("reading " + file.name, () => working && working.cancel());
   try {
-    const style = await makeStyle(file, box, opts);
+    const {style, extra} = await makeStyle(file, box, opts);
     box.say("drawing");
     removeKind("database");                          // the map of the last time goes when the new one is ready
-    await addStyleObject(JSON.parse(style), file.name, "database", {ocean: opts.ocean === "on", decks: opts.decks === "on"});
+    const entry = await addStyleObject(JSON.parse(style), file.name, "database", {ocean: opts.ocean === "on", decks: opts.decks === "on"});
     lastDb = {file, opts};
+    try { localStorage.setItem("roadstyle-used", "1"); } catch (e) { /* no storage */ }
+    if (extra) extra.then((ex) => ex && addAnnotations(entry, ex)).catch((e) => console.warn("roadstyle: the street names and arrows could not be added:", e));
   } catch (e) {
     if (!(e && e.message === "cancelled")) fail(e);
   } finally {
@@ -833,9 +878,22 @@ async function redrawDatabase() {
 }
 
 async function askAddStyle() {
-  const r = await ask("Add a roadstyle layer", [{name: "url", label: "URL of a roadstyle export (style.json)", type: "url", required: true,
-    placeholder: "https://example.org/export/style.json"}], "Add");
-  if (r) await addStyle(r.url);
+  const r = await ask("Add a roadstyle layer", [
+    {name: "file", label: "A style file from your disk (.json): the fast way", type: "file", accept: ".json,application/json",
+     hint: "Made with Python: mapstyle monaco.duckdb --inline monaco.json --planner. It opens in seconds, also for a big area."},
+    {name: "url", label: "or the URL of a roadstyle export (style.json)", type: "url", placeholder: "https://example.org/export/style.json"}], "Add");
+  if (!r) return;
+  if (r.file) {
+    const box = progress("reading " + r.file.name);
+    try {
+      let style;
+      try { style = JSON.parse(await r.file.text()); } catch (e) { throw new Error(r.file.name + " is not a style file (JSON): " + e.message); }
+      if (!style || !Array.isArray(style.layers) || !style.sources) throw new Error(r.file.name + " is not a roadstyle style (it has no layers and sources). Make it with: mapstyle monaco.duckdb --inline monaco.json");
+      box.say("drawing");
+      await addStyleObject(style, r.file.name, "style", {});
+    } finally { box.done(); }
+  } else if (r.url) await addStyle(r.url);
+  else notify("Choose a style file, or type the URL of one.", "warn");
 }
 
 function removeEverything() {
@@ -862,12 +920,15 @@ export const plugin = {
                 {id: "remove", label: "Remove roadstyle layers", onSelect: run(removeEverything)}],
       });
     }
+    // Whoever opened a database here before gets Python started in the background a few seconds after GeoLibre opens (it needs 6 s and tens of MB): the next open is quicker.
+    try { if (localStorage.getItem("roadstyle-used") === "1") warmTimer = setTimeout(() => warmUp(), 6000); } catch (e) { /* no storage: no early start */ }
   },
   async handleUrlParameters(host, params) {
     app = app || host;
     for (const url of params.getAll("roadstyle")) await addStyle(url).catch(fail);
   },
   deactivate() {
+    clearTimeout(warmTimer);
     if (working) working.cancel();
     removeAll();
     unstyleAll();

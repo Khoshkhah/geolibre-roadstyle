@@ -44,10 +44,20 @@ def write_plugin_files(folder=HERE, mapstyle_src=None):
         mapstyle_src = Path(next(iter(mapstyle.__path__)))
     (d / "py").mkdir(exist_ok=True)
     with zipfile.ZipFile(d / "py" / "pkgs.zip", "w", zipfile.ZIP_DEFLATED) as z:
-        for pkg in (Path(next(iter(roadstyle.__path__))), Path(mapstyle_src)):
+        import branca                          # pure Python, which roadstyle imports: in the zip, so the browser installs nothing from PyPI
+        for pkg in (Path(next(iter(roadstyle.__path__))), Path(mapstyle_src), Path(next(iter(branca.__path__)))):
             for f in sorted(pkg.rglob("*")):     # not the page's vendored MapLibre and the studio: the browser makes no page
                 if f.is_file() and not ({"__pycache__", "vendor", "studio"} & set(f.relative_to(pkg).parts)):
                     z.write(f, (Path(pkg.name) / f.relative_to(pkg)).as_posix())
+
+
+def _minify(js):
+    """The plugin's code minified (GeoLibre's registry asks for a minified bundle); the readable source is in this repository. esbuild, through npx."""
+    import subprocess
+    r = subprocess.run(["npx", "--yes", "esbuild@0.25.5", "--minify", "--format=esm", "--charset=utf8", "--log-level=warning"], input=js, capture_output=True, text=True)
+    if r.returncode or not r.stdout.strip():
+        raise SystemExit("esbuild failed: " + r.stderr[-500:])
+    return r.stdout
 
 
 def write_plugin_zip(folder, out_zip):
@@ -63,7 +73,7 @@ def write_plugin_zip(folder, out_zip):
     Path(out_zip).parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("plugin.json", (d / "plugin.json").read_text())
-        z.writestr("index.js", index.replace("/*__ASSETS__*/null", json.dumps(assets)))
+        z.writestr("index.js", _minify(index.replace("/*__ASSETS__*/null", json.dumps(assets))))
         if (d / "README.md").exists():
             z.writestr("README.md", (d / "README.md").read_text())
     return Path(out_zip)

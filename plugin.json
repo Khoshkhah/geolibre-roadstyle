@@ -1,8 +1,8 @@
 {
   "id": "roadstyle",
   "name": "roadstyle",
-  "version": "0.19.2",
+  "version": "0.20.0",
   "entry": "index.js",
-  "description": "Roads in roadstyle's look (casings, drawing positions, tunnels, 3D bridge decks) with their data, from a roadstyle export (style.json), over GeoLibre's own base map.",
+  "description": "Draws roads in roadstyle's look (casings, bridges, tunnels, one-way arrows), with road-type filters, 3D buildings, base-map layers and a route planner, from a duckOSM database or a style file that you open in the browser.",
   "engines": ["maplibre"]
 }

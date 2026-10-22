@@ -500,6 +500,7 @@ export function mount(map, RM, H) {
 
   return {
     route: (a, b) => window.rmRoute(a, b),
+    setVisible(on) { for (const k of ["A", "B"]) if (markers[k]) markers[k].el.style.display = on ? "" : "none"; },     // the pins go with the panel
     restore() { drawLayers(); drawRadius(); if (window.rmLast && window.rmLast.res) paint(window.rmLast.res); },     // a new base map took the layers away
     dispose() {                                                    // the markers, the route layers and the panel's listeners go
       for (const k of ["A", "B"]) if (markers[k]) { markers[k].remove(); markers[k] = null; }

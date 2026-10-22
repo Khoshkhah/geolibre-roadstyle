@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -105,8 +106,8 @@ def main(db, out=None):
             cases.insert(1, ("planner", f"{HOST}/style_planner.json"))
         for name, url in cases:
             menu(pg, "Add a roadstyle layer")
-            pg.wait_for_selector("[role=dialog] input")
-            pg.fill("[role=dialog] input", url)
+            pg.wait_for_selector("[role=dialog] input[type=url]")
+            pg.fill("[role=dialog] input[type=url]", url)
             pg.click("[role=dialog] button[type=submit]")
             pg.wait_for_timeout(8000)
             pg.evaluate("() => window.__rs.map.jumpTo({center: [7.4262, 43.7385], zoom: 16.5, pitch: 0, bearing: 0})")
@@ -132,6 +133,20 @@ def main(db, out=None):
                 gone = pg.evaluate("() => ({panel: window.__rs.app.getActiveRightPanel(), pins: document.querySelectorAll('.rm-mk').length, dom: !!document.getElementById('rm-panel'), route: !!window.__rs.map.getLayer('rm-route')})")
                 print("planner after removing:", gone)
                 assert gone == {"panel": None, "pins": 0, "dom": False, "route": False}, gone
+        # a style file from the disk (mapstyle --inline): the fast way
+        f = tmp / ("style_planner.json" if (tmp / "style_planner.json").exists() else "style_inline.json")
+        menu(pg, "Add a roadstyle layer")
+        pg.wait_for_selector("[role=dialog] input[type=file]")
+        pg.set_input_files("[role=dialog] input[type=file]", str(f))
+        t0 = time.time()
+        pg.click("[role=dialog] button[type=submit]")
+        pg.wait_for_function("() => window.__rs.map.getStyle().layers.some((l) => l.id.startsWith('rs') && /roads-simple$/.test(l.id))", timeout=120000)
+        secs = round(time.time() - t0, 1)
+        s = state(pg)
+        print("style file from the disk:", f.name, "->", s["layers"], "layers in", secs, "s")
+        assert s["layers"] > 0 and secs < 40, (s, secs)
+        menu(pg, "Remove roadstyle layers")
+        pg.wait_for_timeout(2500)
         # "Style a layer with roadstyle": a GeoJSON data layer of the edges (with their drawing positions), and the plugin's default look
         pg.evaluate("""async (u) => { const g = await (await fetch(u)).json(); window.__rs.app.addGeoJsonLayer("monaco edges", g); }""", f"{HOST}/edges.geojson")
         pg.wait_for_timeout(8000)

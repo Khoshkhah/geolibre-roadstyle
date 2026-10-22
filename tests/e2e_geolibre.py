@@ -14,6 +14,7 @@ import os
 import io
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -91,6 +92,15 @@ def main(db, out=None):
         pg.wait_for_selector(".rs-pl-progress", state="detached", timeout=400000)
         pg.wait_for_timeout(8000)
 
+        # 0) the street names and the arrows come after the first picture (a second pass of Python): wait for them
+        t_names = time.time()
+        pg.wait_for_function("() => window.__rs.map.getLayer('rs0-roads-arrows') != null", timeout=240000)
+        print("the street names and arrows came", round(time.time() - t_names, 1), "s after the map was drawn and the first checks")
+        pg.wait_for_timeout(3000)
+        names_row = pg.evaluate("() => window.__rs.app.listLayers().map((l) => l.name).filter((n) => n === 'names and arrows').length")
+        print("row 'names and arrows':", names_row)
+        assert names_row == 1, names_row
+
         # 1) the arrows: roadstyle's own image, not the base map's
         arrows = pg.evaluate("""() => { const m = window.__rs.map, id = m.getLayoutProperty('rs0-roads-arrows', 'icon-image'), i = m.getImage(id);
                                         return {id, w: i && i.data.width, sdf: i && i.sdf, base: m.getImage('oneway').data.width}; }""")
@@ -133,6 +143,20 @@ def main(db, out=None):
         after = pg.evaluate("() => JSON.stringify(window.rmLast.res ? window.rmLast.res.legs.map((l) => l.edges.length) : window.rmLast)")
         print("a drag of pin A: legs before", before, "after", after)
         assert before != after, "dragging the pin did not route again"
+
+        # 1b2) routing mode ends when the panel is closed: the pins and the route go, the normal map stays; opening the panel brings them back
+        pg.evaluate("() => window.__rs.app.closeRightPanel('roadstyle-planner')")
+        pg.wait_for_timeout(1500)
+        off = pg.evaluate("""() => ({pins: [...document.querySelectorAll('.rm-mk')].filter((e) => getComputedStyle(e).display !== 'none').length,
+            route: window.__rs.map.getLayoutProperty('rm-route', 'visibility'), roads: window.__rs.map.getLayoutProperty('rs0-roads-simple', 'visibility') !== 'none'})""")
+        print("panel closed:", off)
+        assert off == {"pins": 0, "route": "none", "roads": True}, off
+        pg.evaluate("() => window.__rs.app.openRightPanel('roadstyle-planner')")
+        pg.wait_for_timeout(2000)
+        on = pg.evaluate("""() => ({pins: [...document.querySelectorAll('.rm-mk')].filter((e) => getComputedStyle(e).display !== 'none').length,
+            route: window.__rs.map.getLayoutProperty('rm-route', 'visibility') !== 'none'})""")
+        print("panel opened again:", on)
+        assert on == {"pins": 2, "route": True}, on
 
         # 1c) full screen: GeoLibre makes the map element full screen; the planner's panel moves into a box over the map, and back
         pg.locator("button[aria-label='Enter fullscreen']").first.click()
