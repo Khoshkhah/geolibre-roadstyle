@@ -127,6 +127,15 @@ def main(db, out=None):
         print("groups on the map:", groups)
         assert "ocean" not in groups and "3D bridge decks" not in groups, groups                           # out unless chosen in the dialog
         assert all(groups[g]["visible"] > 0 for g in ("landcover", "water", "buildings", "crossings", "traffic_signals", "roads", "paved")), groups   # paved: duckOSM 0.6.0
+        assert all(groups[g]["visible"] > 0 for g in ("raceway",)), groups                     # mapstyle 0.9.0: the Circuit de Monaco
+        rc = pg.evaluate("""() => { const m = window.__rs.map, L = m.getStyle().layers.find((l) => (l.metadata || {})['roadstyle:group'] === 'raceway');
+            const f = m.querySourceFeatures(L.source, {sourceLayer: L['source-layer'], filter: ['==', ['get', 'kind'], 'raceway']})[0];
+            let c = f.geometry.coordinates; while (Array.isArray(c[0])) c = c[Math.floor(c.length / 2)];
+            m.jumpTo({center: c, zoom: 17, pitch: 0, bearing: 0}); return {id: L.id}; }""")
+        pg.wait_for_timeout(5000)
+        nr = pg.evaluate("(id) => window.__rs.map.queryRenderedFeatures({layers: [id]}).length", rc["id"])
+        print("raceway pieces drawn at zoom 17:", nr)
+        assert nr > 0, "the raceway is not drawn"
         if "buildings 3D" in groups:                                                                        # mapstyle 0.7.0 and later
             assert groups["buildings 3D"]["visible"] == 1, groups
             n3 = pg.evaluate("""() => { const m = window.__rs.map; m.jumpTo({pitch: 60}); return m.getStyle().layers.filter((l) => l.type === 'fill-extrusion' && (l.metadata || {})['roadstyle:group'] === 'buildings 3D').length; }""")
