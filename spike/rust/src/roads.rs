@@ -11,6 +11,10 @@ pub struct Look {
     fallback: [Value; 2],
     single_line: HashSet<String>,
     twin_one: bool,
+    /// the heads' default length (render's head_m)
+    pub head_m: f64,
+    /// config bridge_shadow: a bridge's main casing piece casts a shadow (simple source)
+    pub bridge_shadow: bool,
 }
 
 impl Look {
@@ -29,6 +33,8 @@ impl Look {
             single_line: look["config"]["single_line_classes"].as_array().into_iter().flatten()
                 .filter_map(|v| v.as_str().map(String::from)).collect(),
             twin_one: look["config"]["twin_casing"] == "one",
+            head_m: look["head_m"].as_f64().ok_or("look.json: no head_m")?,
+            bridge_shadow: truthy(look["config"].get("bridge_shadow")),
         })
     }
 }
@@ -44,30 +50,33 @@ const CAP_START: &str = "cap_start";
 const CAP_END: &str = "cap_end";
 const JS_MAX_SAFE_INT: u64 = (1 << 53) - 1;
 
-/// The "roads" source of the style.
-pub fn roads_source(mut fs: Vec<Feature>, look: &Look) -> Value {
-    bake_props(&mut fs, look);
-    mark_twoway(&mut fs);
+/// The stages of render_web.render on the roads, in its order; each road gets `__rs_edge`, its position.
+pub fn mark_roads(fs: &mut [Feature], look: &Look) {
+    bake_props(fs, look);
+    mark_twoway(fs);
     if !look.single_line.is_empty() {
-        mark_single_line(&mut fs, &look.single_line);
+        mark_single_line(fs, &look.single_line);
     }
-    mark_lvl(&mut fs);
-    mark_caps(&mut fs);
-    mark_heads(&mut fs);
-    mark_levels(&mut fs);
-    if look.twin_one && mark_twin_casing(&mut fs) {
-        mark_twin_dead_ends(&mut fs);
+    mark_lvl(fs);
+    mark_caps(fs);
+    mark_heads(fs);
+    mark_levels(fs);
+    if look.twin_one && mark_twin_casing(fs) {
+        mark_twin_dead_ends(fs);
     }
-    stringify_unsafe_ints(&mut fs);
-    let features: Vec<Value> = fs.into_iter().enumerate().map(|(i, mut f)| {
+    stringify_unsafe_ints(fs);
+    for (i, f) in fs.iter_mut().enumerate() {
         f.props.insert("__rs_edge".into(), i.into());
-        let cls = f.props.get(HIGHWAY).cloned().unwrap_or(Value::Null); // _mark_cls: filter_col is highway_col
-        f.props.insert("__rs_cls".into(), cls);
-        let geometry = match f.coords {
-            Some(c) => json!({"type": "LineString", "coordinates": c}),
-            None => Value::Null,
-        };
-        json!({"id": i, "type": "Feature", "properties": f.props, "geometry": geometry})
+    }
+}
+
+/// The "roads" source of the style, from the marked roads (with __rs_cls, _mark_cls: filter_col is highway_col).
+pub fn roads_source(fs: &[Feature]) -> Value {
+    let features: Vec<Value> = fs.iter().enumerate().map(|(i, f)| {
+        let mut props = f.props.clone();
+        props.insert("__rs_cls".into(), f.props.get(HIGHWAY).cloned().unwrap_or(Value::Null));
+        let geometry = f.coords.as_ref().map_or(Value::Null, |c| json!({"type": "LineString", "coordinates": c}));
+        json!({"id": i, "type": "Feature", "properties": props, "geometry": geometry})
     }).collect();
     json!({"type": "geojson", "data": {"type": "FeatureCollection", "features": features}, "tolerance": 0.05})
 }
@@ -79,7 +88,7 @@ fn missing(v: Option<&Value>) -> bool {
 }
 
 /// render_web._truthy: not missing and not "", "no", "false", "0", 0 or False.
-fn truthy(v: Option<&Value>) -> bool {
+pub(crate) fn truthy(v: Option<&Value>) -> bool {
     match v {
         None | Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,

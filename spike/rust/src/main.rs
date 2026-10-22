@@ -6,9 +6,10 @@
 
 mod read;
 mod roads;
+mod simple;
 
 use serde_json::{json, Value};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
 fn fail(msg: String) -> ! {
@@ -30,14 +31,18 @@ fn main() {
     let layers = json_file(&args[2]);
     let data = fs::read(&args[3]).unwrap_or_else(|e| fail(format!("{}: {e}", args[3])));
 
+    let ms = |a: Duration, b: Duration| (b - a).as_secs_f64() * 1e3;
     let t = Instant::now();
-    let feats = read::read_roads(data, "geometry").unwrap_or_else(|e| fail(format!("{}: {e}", args[3])));
+    let mut feats = read::read_roads(data, "geometry").unwrap_or_else(|e| fail(format!("{}: {e}", args[3])));
     let t_read = t.elapsed();
-    let source = roads::roads_source(feats, &look);
+    roads::mark_roads(&mut feats, &look);
+    let roads = roads::roads_source(&feats);
     let t_roads = t.elapsed();
-    let text = json!({"layers": layers, "sources": {"roads": source}}).to_string();
+    let simple = simple::simple_source(&feats, look.head_m, look.bridge_shadow).unwrap_or_else(|e| fail(e));
+    let t_simple = t.elapsed();
+    let text = json!({"layers": layers, "sources": {"roads": roads, "simple": simple}}).to_string();
     let t_json = t.elapsed();
     fs::write(&args[4], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[4])));
-    eprintln!("read {:.0} ms, roads {:.0} ms, JSON {:.0} ms ({:.1} MB)", t_read.as_secs_f64() * 1e3,
-              (t_roads - t_read).as_secs_f64() * 1e3, (t_json - t_roads).as_secs_f64() * 1e3, text.len() as f64 / 1e6);
+    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, JSON {:.0} ms ({:.1} MB)", ms(Duration::ZERO, t_read),
+              ms(t_read, t_roads), ms(t_roads, t_simple), ms(t_simple, t_json), text.len() as f64 / 1e6);
 }

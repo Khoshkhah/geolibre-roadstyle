@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: S0, S1 (smaller form) and S2 are done. The browser profile is done (see "Where the browser time goes"). S3 waits for a decision (2026-10-22).
+Status: S0, S1 (smaller form), S2 and S3 are done, and the browser profile (2026-10-22). S4 (the wasm module in the browser) is next.
 
 ## Question
 
@@ -189,3 +189,47 @@ Pyodide is about 2.2 times slower than native overall; DuckDB reads are 4 to 6 t
 Cheap wins in Python, seen on the way (not part of the spike): `fc_dict` takes the GeoPandas path in the browser (1.2 s) because DuckDB wasm has no spatial extension; the planner data is 0.7 s of `fetchall` loops that could be one SQL.
 
 Rerun: `mapstyle/.venv/bin/python spike/profile/rs_profile.py monaco.duckdb` (native, 6 s) and `... spike/profile/run_browser.py monaco.duckdb` (browser, about 40 s).
+
+## Result of S3 (2026-10-22)
+
+**The "simple" source in Rust equals Python's exactly.** All 47,530 pieces of Monaco are equal with tolerance 0: every coordinate, every sort key, every property and every id. The compare script finds a coordinate changed by 1e-8, a sort key changed by 1e-6 and one missing lap. The test (`spike/test_compare.py`) now compares the layers, `roads` and `simple` with tolerance 0.
+
+The pieces: 34,280 casings (13,096 seams, 6,548 laps, 10,211 stubs, 2,908 main pieces), 10,112 fills, 1,430 tunnel gap and 1,430 tunnel dash pieces, 278 bridge shadows.
+
+What `spike/rust/src/simple.rs` ports (314 lines): `_casing_parts` (the cuts at the heads, short roads cut in the heads' ratio, the seams and the laps), `_halves`, `_end_stub`, `_simple_pieces` (the piece kinds, the sort keys, the shadows, the tunnel pieces), the feature ids and `_mark_cls`.
+
+How the numbers stay exact:
+- The same flat projection at the line's first point, the same sequential sums and `hypot`, and numpy's `searchsorted` as `partition_point`.
+- numpy's `round(x, 7)` is `rint(x * 1e7) / 1e7` (checked on one million values), so Rust uses `(x * 1e7).round_ties_even() / 1e7`.
+- In wasm, Rust's `cos` and `hypot` come from its own math library, not from glibc. A last-bit difference can change a rounded coordinate in rare cases. S4 must compare the browser output with tolerance 0 too, and accept 1e-7 if it fails only there.
+
+Not ported: `_mitre_ends`. It moves flat ends only for roads with metre widths (`__rs_wm`) and for items, and this data has neither. The Rust code stops with an error if a road has `__rs_wm`, so it cannot give a wrong answer without a warning.
+
+Times on this computer, native, Monaco, three runs:
+
+| Step | Rust | Python (native, the same stages) |
+|---|---|---|
+| Read the roads | 42 ms (Parquet) | 0.2 s (DuckDB + GeoDataFrame) |
+| Roads stages | 270 ms | 0.4 s (`fc_dict` + marks) |
+| Simple pieces | 460 ms | 1.0 s |
+| JSON text (42 MB) | 340 ms | 0.4 s |
+
+Natively, Rust is only about 1.7 times faster. The Rust code is not tuned: every piece is a map with about 40 text keys, copied from its road. A struct per road and per piece would remove most of the 2 million key copies. In the browser the gap is larger, because Pyodide is about 2.2 times slower than native and wasm usually about 1.5 times.
+
+## Go / no-go for the full port (2026-10-22)
+
+**Go on the main technical question.** The hardest geometry in the style (heads, seams, laps, stubs, halves, shadows, tunnel pieces, twin pairs) ports exactly, in about 830 lines of Rust, in one working day. The method works: a golden file, a compare script with tolerance 0, and a port function by function in the Python order.
+
+**What is still open for the full port**, by size and risk:
+
+| Part | Python | Risk |
+|---|---|---|
+| Names and arrows (`_annotation_slots`) | about 250 lines; shapely STRtree | The largest stage (5.8 s in the browser). Needs a spatial index in Rust (`rstar`). Exact equality is harder: shapely's distances and projections. |
+| The layers | about 25 builders and 3 passes | Data flags (S1). Exact JSON, no geometry: medium work, low risk. |
+| Base-map layers (`features.*`) | about 400 lines; SQL and `_restyle` | Mostly data and JSON. |
+| Planner data | about 80 lines of SQL | Low. |
+| 3D decks | about 150 lines; a polygon buffer | Needs a buffer in Rust (`geo`), exact equality is unlikely: accept a tolerance. |
+| Reading the `.duckdb` file | — | duckdb-wasm in JavaScript, or Parquet written by `duckosm`. A decision, not code. |
+| The levels solver | about 1,100 lines | Stays offline (`duckosm levels`): a file without levels opens without the browser solver. |
+
+**Recommendation:** finish S4 (the wasm module in a worker, measured in headless Chromium against the Pyodide numbers). Then decide the full port with real browser numbers. The next unknown after S4 is the names and arrows, because they are the largest stage and depend on shapely.

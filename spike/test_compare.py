@@ -28,7 +28,8 @@ def test_differences():
 
 
 def test_rust_style_equals_golden(tmp_path):
-    """S1 + S2: the layers and the "roads" source that the Rust crate makes equal Python's (needs the fixture and cargo)."""
+    """S1 to S3: the layers and the "roads" and "simple" sources that the Rust crate makes equal Python's, number for number (needs the
+    fixture and cargo)."""
     here, data = Path(__file__).parent, Path(__file__).parent / "data"
     if not (data / "golden.json").exists() or shutil.which("cargo") is None:
         return
@@ -36,8 +37,8 @@ def test_rust_style_equals_golden(tmp_path):
     subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
     out = tmp_path / "made.json"
     subprocess.run([str(exe), *(str(data / f) for f in ("look.json", "layers.json", "roads.parquet")), str(out)], check=True)
-    r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden.json"), str(out), "--only", "layers,sources.roads"],
-                       capture_output=True, text=True)
+    r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden.json"), str(out), "--only", "layers,sources.roads,sources.simple",
+                        "--tol", "0"], capture_output=True, text=True)
     assert r.stdout.strip() == "equal", r.stdout
 
 
