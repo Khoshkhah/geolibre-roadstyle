@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: steps 1 and 2 of the full port are done; step 3 (the base-map layers) is started (2026-10-22).
+Status: steps 1 to 3 of the full port are done: the worker makes the whole map (roads and base map) with no Python (2026-10-22). Steps 4 (the planner data) and 5 (the 3D bridge decks) are next.
 
 ## Question
 
@@ -587,3 +587,29 @@ centroids of the parking areas) differs in the last bit of a few coordinates and
 
 **Next:** the worker's SQL for the features (`features_sql.js`, the same statements as the fixture's `features_parquet`), `edge_attach`, then the
 overlays and their layers, the placement and mapstyle's `_restyle`.
+
+## Full port, step 3: result (2026-10-22)
+
+**The worker makes the base map too.** On Monaco, in Chromium, the style the worker makes from the `.duckdb` file equals the whole map
+(`golden_full.json`, `mapstyle.export.export_inline(db, view_3d=False)`): all 55 layers and the images with tolerance 0, and the 14 base-map sources
+within 1e-12 (with the street of each crossing and signal). Natively too (`test_rust_style_equals_golden`; 8 tests in all).
+
+What was added:
+
+- `spike/worker/features_sql.js`: the queries of `load_layers` (one per layer of `layers.yaml`, the geometry as WKB), as `features.parquet`; the fixture
+  makes the same file in Python for the native tests.
+- `spike/rust/src/overlays.rs` (about 300 lines): `edge_attach` (the street drawn on top within 1 m, else the nearest street within 3 m, else the nearest
+  road; an R-tree), `feature_overlays` (each layer's look from the theme's `features` style), `_overlay_layers` and `_edge_overlay`.
+- `spike/rust/src/layers.rs`: the placement (under the roads; on a street, one copy per fill number between the road layer and the arrows; over the
+  roads), the overlays' colours in the state (`rs_ov_<i>`) and in the tunnel look, the group of each layer (its overlay's label), and mapstyle's
+  `_restyle` (colour and outline by kind, dashes, the landcover textures, the icons, the 3D buildings under the arrows, zoom ranges).
+- The look data from the build (`look.json`): the theme's `features` style, the images (the textures as PNG and the icons as SVG data URLs, made
+  by mapstyle's own `feature_overlays`), and the arrow image of roadstyle's export.
+
+`makeStyle` takes `(roads, look, features?)` and returns the layers, the sources and `metadata["roadstyle:images"]`.
+
+**Time** (Chromium, Monaco): duckdb-wasm start 0.48 s, attach 0.04 s, the roads SQL 0.61 s, the base-map SQL 0.05 s, Rust 1.55 s: 2.78 s in the worker,
+3.04 s until the page has the style. Natively the base map adds 22 ms. The Rust code is 2,897 lines; the wasm module is 0.90 MB with gzip.
+
+**Not in the style yet** (compared with mapstyle's export): the planner data (`metadata["roadstyle:planner"]`, step 4), the 3D bridge decks (step 5),
+and the page metadata that is not drawn (`roadstyle:interaction`, `center`, `zoom`, `name`): small, from the look and the bounds.

@@ -163,7 +163,7 @@ fn point_seg_dist(p: Pt, a: Pt, b: Pt) -> f64 {
     s.abs() * len2.sqrt()
 }
 
-fn point_line_dist(p: Pt, c: &[Pt]) -> f64 {
+pub(crate) fn point_line_dist(p: Pt, c: &[Pt]) -> f64 {
     c.windows(2).map(|w| point_seg_dist(p, w[0], w[1])).fold(f64::INFINITY, f64::min)
 }
 
@@ -187,7 +187,7 @@ fn project(c: &[Pt], p: Pt) -> f64 {
     at
 }
 
-fn bbox(c: &[Pt]) -> ([f64; 2], [f64; 2]) {
+pub(crate) fn bbox(c: &[Pt]) -> ([f64; 2], [f64; 2]) {
     let mut lo = [f64::INFINITY; 2];
     let mut hi = [f64::NEG_INFINITY; 2];
     for p in c {

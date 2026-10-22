@@ -1,9 +1,9 @@
 //! Spike and full port (docs/design/rust-spike.md): the road part of the style, natively, with the time of each step.
 //!
-//!     cargo run --release -- spike/data/look.json spike/data/roads.parquet made.json
+//!     cargo run --release -- spike/data/look.json spike/data/roads.parquet spike/data/features.parquet made.json     # features: - for none
 //!     cargo run --release -- --layers spike/data/look.json spike/data/layers/all/roads.parquet     # the road layers alone, as {"layers": [...]}
 
-use roadstyle_spike::{layers, read, roads, simple, slots};
+use roadstyle_spike::{layers, overlays, read, roads, simple, slots};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
@@ -32,14 +32,15 @@ fn main() {
         return;
     }
     let layers_only = args.len() == 4 && args[1] == "--layers";
-    if !layers_only && args.len() != 4 {
-        fail("usage: roadstyle-spike <look.json> <roads.parquet> <out.json>  |  roadstyle-spike --layers <look.json> <roads.parquet>".into());
+    if !layers_only && args.len() != 5 {
+        fail("usage: roadstyle-spike <look.json> <roads.parquet> <features.parquet | -> <out.json>  |  roadstyle-spike --layers <look.json> <roads.parquet>".into());
     }
     let (look_path, roads_path) = if layers_only { (&args[2], &args[3]) } else { (&args[1], &args[2]) };
     let look_json = json_file(look_path);
     let look = roads::Look::from_json(&look_json).unwrap_or_else(|e| fail(e));
     let slot_look = slots::SlotLook::from_json(&look_json).unwrap_or_else(|e| fail(e));
     let data = fs::read(roads_path).unwrap_or_else(|e| fail(format!("{roads_path}: {e}")));
+    let fdata = if layers_only || args[3] == "-" { None } else { Some(fs::read(&args[3]).unwrap_or_else(|e| fail(format!("{}: {e}", args[3])))) };
 
     let ms = |a: Duration, b: Duration| (b - a).as_secs_f64() * 1e3;
     let t = Instant::now();
@@ -52,15 +53,31 @@ fn main() {
     let t_simple = t.elapsed();
     let slots = slots::slots_source(&feats, &slot_look);
     let t_slots = t.elapsed();
-    let layers = layers::road_layers(&look_json, features(&roads), features(&simple), features(&slots)).unwrap_or_else(|e| fail(e));
+    let (mut ovs, mut images) = (Vec::new(), serde_json::Map::new());
+    if let Some(f) = fdata {
+        let mut fcs = roadstyle_spike::features::feature_collections(f, &look_json).unwrap_or_else(|e| fail(e));
+        let attached = overlays::edge_attach(&mut fcs, &feats);
+        (ovs, images) = overlays::feature_overlays(fcs, &look_json, &attached);
+    }
+    let t_base = t.elapsed();
+    let layers = layers::road_layers(&look_json, features(&roads), features(&simple), features(&slots), &mut ovs).unwrap_or_else(|e| fail(e));
     let t_layers = t.elapsed();
     if layers_only {
         println!("{}", json!({"layers": layers}));
         return;
     }
-    let text = json!({"layers": layers, "sources": {"roads": roads, "simple": simple, "slots": slots}}).to_string();
+    let mut sources = serde_json::Map::new();
+    sources.insert("roads".into(), roads);
+    for (i, ov) in ovs.into_iter().enumerate() {
+        sources.insert(format!("ov{i}"), json!({"type": "geojson", "data": ov.fc, "generateId": true}));
+    }
+    sources.insert("simple".into(), simple);
+    sources.insert("slots".into(), slots);
+    images.insert("oneway".into(), look_json["oneway_image"].clone());
+    let text = json!({"layers": layers, "sources": sources, "metadata": {"roadstyle:images": images}}).to_string();
     let t_json = t.elapsed();
-    fs::write(&args[3], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[3])));
-    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, slots {:.0} ms, layers {:.0} ms, JSON {:.0} ms ({:.1} MB)", ms(Duration::ZERO, t_read),
-              ms(t_read, t_roads), ms(t_roads, t_simple), ms(t_simple, t_slots), ms(t_slots, t_layers), ms(t_layers, t_json), text.len() as f64 / 1e6);
+    fs::write(&args[4], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[4])));
+    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, slots {:.0} ms, base map {:.0} ms, layers {:.0} ms, JSON {:.0} ms ({:.1} MB)",
+              ms(Duration::ZERO, t_read), ms(t_read, t_roads), ms(t_roads, t_simple), ms(t_simple, t_slots), ms(t_slots, t_base), ms(t_base, t_layers),
+              ms(t_layers, t_json), text.len() as f64 / 1e6);
 }

@@ -4,6 +4,7 @@
 pub mod features;
 pub mod geom;
 pub mod layers;
+pub mod overlays;
 pub mod read;
 pub mod roads;
 pub mod simple;
@@ -11,9 +12,10 @@ pub mod slots;
 
 use serde_json::{json, Value};
 
-/// The style's road layers and its "roads", "simple" and "slots" sources, as JSON text. `look`: look.json (the resolved look);
-/// `parquet`: the roads as tools/make_spike_fixture.py (or the worker's SQL) writes them.
-pub fn make_style(parquet: Vec<u8>, look: &str) -> Result<String, String> {
+/// The style's layers and sources, as JSON text: the roads ("roads", "simple", "slots") and, with `features` (the base-map tables as the
+/// worker's SQL writes them), the base map ("ov<i>"). `look`: look.json (the resolved look); `parquet`: the roads as
+/// tools/make_spike_fixture.py (or the worker's SQL) writes them.
+pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>) -> Result<String, String> {
     let look_json: Value = serde_json::from_str(look).map_err(|e| format!("look: not JSON: {e}"))?;
     let look = roads::Look::from_json(&look_json)?;
     let mut feats = read::read_roads(parquet, "geometry")?;
@@ -21,11 +23,26 @@ pub fn make_style(parquet: Vec<u8>, look: &str) -> Result<String, String> {
     let roads = roads::roads_source(&feats);
     let simple = simple::simple_source(&feats, look.head_m, look.bridge_shadow)?;
     let slots = slots::slots_source(&feats, &slots::SlotLook::from_json(&look_json)?);
-    let layers = layers::road_layers(&look_json, features(&roads), features(&simple), features(&slots))?;
-    Ok(json!({"layers": layers, "sources": {"roads": roads, "simple": simple, "slots": slots}}).to_string())
+    let mut ovs = Vec::new();
+    let mut images = serde_json::Map::new();
+    if let Some(f) = features {
+        let mut fcs = features::feature_collections(f, &look_json)?;
+        let attached = overlays::edge_attach(&mut fcs, &feats);
+        (ovs, images) = overlays::feature_overlays(fcs, &look_json, &attached);
+    }
+    let layers = layers::road_layers(&look_json, source_features(&roads), source_features(&simple), source_features(&slots), &mut ovs)?;
+    let mut sources = serde_json::Map::new();
+    sources.insert("roads".into(), roads);
+    for (i, ov) in ovs.into_iter().enumerate() {
+        sources.insert(format!("ov{i}"), json!({"type": "geojson", "data": ov.fc, "generateId": true}));
+    }
+    sources.insert("simple".into(), simple);
+    sources.insert("slots".into(), slots);
+    images.insert("oneway".into(), look_json["oneway_image"].clone());
+    Ok(json!({"layers": layers, "sources": sources, "metadata": {"roadstyle:images": images}}).to_string())
 }
 
-fn features(source: &Value) -> &[Value] {
+fn source_features(source: &Value) -> &[Value] {
     source["data"]["features"].as_array().map_or(&[][..], |v| v.as_slice())
 }
 
@@ -33,9 +50,9 @@ fn features(source: &Value) -> &[Value] {
 mod wasm {
     use wasm_bindgen::prelude::*;
 
-    /// makeStyle(parquet: Uint8Array, look: string) -> string; an error is a thrown Error with the message.
+    /// makeStyle(roads: Uint8Array, look: string, features?: Uint8Array) -> string; an error is a thrown Error with the message.
     #[wasm_bindgen(js_name = makeStyle)]
-    pub fn make_style(parquet: Vec<u8>, look: &str) -> Result<String, JsError> {
-        super::make_style(parquet, look).map_err(|e| JsError::new(&e))
+    pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>) -> Result<String, JsError> {
+        super::make_style(parquet, look, features).map_err(|e| JsError::new(&e))
     }
 }

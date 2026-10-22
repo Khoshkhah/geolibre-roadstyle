@@ -28,22 +28,25 @@ def test_differences():
 
 
 def test_rust_style_equals_golden(tmp_path):
-    """S1 to S3 and S6: the layers and the "roads", "simple" and "slots" sources that the Rust crate makes equal Python's, number for
-    number (needs the fixture and cargo)."""
+    """S1 to S3, S6 and the full port's steps 2 and 3: the style the Rust crate makes from roads.parquet and features.parquet equals Python's:
+    the roads, simple and slots sources, every layer, the base-map sources and the images (needs the fixture and cargo)."""
     here, data = Path(__file__).parent, Path(__file__).parent / "data"
     if not (data / "golden.json").exists() or shutil.which("cargo") is None:
         return
     exe = here / "rust" / "target" / "release" / "roadstyle-spike"
     subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
     out = tmp_path / "made.json"
-    subprocess.run([str(exe), str(data / "look.json"), str(data / "roads.parquet"), str(out)], check=True)
+    subprocess.run([str(exe), str(data / "look.json"), str(data / "roads.parquet"), str(data / "features.parquet"), str(out)], check=True)
     r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden.json"), str(out), "--only", "sources.roads,sources.simple",
                         "--tol", "0"], capture_output=True, text=True)
     assert r.stdout.strip() == "equal", r.stdout
-    # step 2: the road layers, made in Rust, against the golden of all the roads with arrows and labels
-    r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "layers" / "all" / "golden.json"), str(out), "--only", "layers",
-                        "--tol", "0"], capture_output=True, text=True)
-    assert r.stdout.strip() == "equal", r.stdout
+    # steps 2 and 3: all the layers (roads and base map, made in Rust) against the whole map, with tolerance 0; the base-map sources (with the
+    # street of each crossing and signal) within 1e-12 (a centroid summed in another order); the images
+    golden, made = json.loads((data / "golden_full.json").read_text()), json.loads(out.read_text())
+    assert diff(golden["layers"], made["layers"], tol=0) == []
+    ov = [k for k in golden["sources"] if k.startswith("ov")]
+    assert len(ov) == 14 and diff({k: golden["sources"][k] for k in ov}, {k: made["sources"].get(k) for k in ov}, tol=1e-12) == []
+    assert golden["metadata"]["roadstyle:images"] == made["metadata"]["roadstyle:images"]
     # S6: the names and arrows (the slots), against the export with arrows and labels on
     r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden_slots.json"), str(out), "--only", "sources.slots", "--tol", "0"],
                        capture_output=True, text=True)

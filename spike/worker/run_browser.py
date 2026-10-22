@@ -3,7 +3,8 @@
     mapstyle/.venv/bin/python spike/worker/run_browser.py monaco.duckdb [--no-build]
 
 1. The roads table the worker wrote in SQL equals spike/data/roads.parquet (from Python): the same rows, in the same order.
-2. The style equals the golden files: the layers (made in Rust, step 2) and roads with tolerance 0, simple within one rounding step (2e-7), slots within one (1e-6).
+2. The style equals the golden files: the layers (made in Rust: the roads, step 2, and the base map, step 3), roads and images with tolerance 0,
+   the base-map sources within 1e-12, simple within one rounding step (2e-7), slots within one (1e-6).
 Needs the network (duckdb-wasm from jsdelivr), cargo, wasm-bindgen and the fixture (spike/data, made with the roadstyle branch fix/short-road-one-cut)."""
 import argparse
 import functools
@@ -29,7 +30,7 @@ PKG, build = _s4.PKG, _s4.build
 
 def run(db):
     with tempfile.TemporaryDirectory() as tmp:
-        for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (HERE / "roads_sql.js", "roads_sql.js"),
+        for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (HERE / "roads_sql.js", "roads_sql.js"), (HERE / "features_sql.js", "features_sql.js"),
                           (PKG, "pkg"), (DATA / "look.json", "look.json"), (Path(db).resolve(), "map.duckdb")):
             os.symlink(src, Path(tmp) / name)
 
@@ -88,7 +89,9 @@ def main(argv=None):
     ok, msg = same_rows(made_pq, DATA / "roads.parquet")
     print("1. the roads table from SQL against roads.parquet (Python):", msg)
     rc = 0 if ok else 1
-    for what, ref, only, tol in (("layers", "layers/all/golden.json", "layers", "0"), ("roads", "golden.json", "sources.roads", "0"),
+    ov = ",".join(f"sources.ov{i}" for i in range(14))
+    for what, ref, only, tol in (("layers (roads and base map)", "golden_full.json", "layers", "0"), ("roads", "golden.json", "sources.roads", "0"),
+                                 ("base-map sources", "golden_full.json", ov, "1e-12"), ("images", "golden_full.json", "metadata.roadstyle:images", "0"),
                                  ("simple", "golden.json", "sources.simple", "2e-7"),
                                  ("slots", "golden_slots.json", "sources.slots", "1e-6")):
         c = subprocess.run([sys.executable, str(SPIKE / "compare.py"), str(DATA / ref), str(made), "--only", only, "--tol", tol],

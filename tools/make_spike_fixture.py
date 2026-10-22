@@ -50,6 +50,31 @@ def _class_styles(palette, config):
     return {"classes": {c: res(s) for c, s in table.items()}, "fallback": res(table.get(FALLBACK) or next(iter(table.values())))}
 
 
+def _theme_features(theme="osm"):
+    """The "features" part of mapstyle's style in the theme's colours (render_map passes load_theme(theme)'s style to feature_overlays)."""
+    from mapstyle.style import load_theme
+    return load_theme(theme)[0]["features"]
+
+
+def _feature_images(theme="osm"):
+    """Every image feature_overlays can put in roadstyle:images (the landcover textures, the point layers' icons), as data URLs: it is run on
+    one placeholder feature per layer, so each layer is present. The Rust code keeps the images of the layers a map has."""
+    from mapstyle.map import feature_overlays
+    from mapstyle.style import load_style, load_theme
+    specs = [s for s in load_style("layers")["layers"] if s.get("show", True) and not s.get("merge_into")]
+    fake = {s["name"]: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"kind": "x"}, "geometry": None}]} for s in specs}
+    return feature_overlays(fake, None, load_theme(theme)[0])[1]["images"]
+
+
+def _oneway_image():
+    """The arrow icon roadstyle's export_inline puts in roadstyle:images (the sprite, an SDF image at the profile's pixel ratio)."""
+    import base64
+    from importlib.resources import files
+    from roadstyle import _settings
+    png = files("roadstyle").joinpath("data/sprite.png").read_bytes()
+    return {"url": "data:image/png;base64," + base64.b64encode(png).decode(), "sdf": True, "pixelRatio": _settings.theme_value("arrows.icon")["pixel_ratio"]}
+
+
 def features_parquet(db, specs, path):
     """The base-map tables of mapstyle.map.load_layers as one Parquet file, as the worker writes it (spike/worker/features_sql.js, the same SQL):
     a row per feature with the layer's index in layers.yaml (``spec``), its name (``layer``, or the one it is merged into), ``osm_id``, ``kind``,
@@ -119,8 +144,11 @@ def main(argv=None):
             "theme": theme, "config": config,
             # what the Rust code reads (S2): the class styles as the styler resolves them, and the render's defaults
             "styles": styles, "head_m": head_m, "slots": slots_look, "roads_model": roads_model,
-            # step 3 of the full port: the base-map layers (mapstyle's styles/layers.yaml and the 3D heights of load_layers)
-            "features": {"layers_yaml": load_style("layers"), "buildings_3d": load_style()["features"]["buildings_3d"]}}
+            # step 3 of the full port: the base-map layers (mapstyle's styles/layers.yaml and the 3D heights of load_layers), the look of
+            # feature_overlays (the theme's "features" style) and its images, and the arrow image of roadstyle's export
+            "features": {"layers_yaml": load_style("layers"), "buildings_3d": load_style()["features"]["buildings_3d"],
+                         "style": _theme_features(), "images": _feature_images()},
+            "oneway_image": _oneway_image()}
     (out / "look.json").write_text(json.dumps(look, default=_json, indent=1))
 
     golden = export_inline(a.db, **ARGS)
