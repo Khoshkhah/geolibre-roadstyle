@@ -28,122 +28,45 @@ is made in the browser from a duckOSM database or a style file. No server is nee
 > 2. **Plugins › Installed › roadstyle** makes the plugin active.
 > 3. The menu **roadstyle** is at the end of the top bar.
 
+## What it does
+
+- **Draws roads in [roadstyle](https://github.com/Khoshkhah/roadstyle)'s look**: casings, bridges, tunnels, one-way arrows, street names, 3D buildings, and a switch for each road type.
+- **A route planner**: drop a start and an end on the map and get the route, with the time, the length and the steps (Walk, Cycle, Drive, Walk + drive).
+- **Opens a [duckOSM](https://github.com/Khoshkhah/duckOSM) database in the browser** (a `.duckdb` file), or a style file that [mapstyle](https://github.com/Khoshkhah/mapstyle) made. No server.
+
 ## Try it with Monaco
 
-1. Download the finished database: [monaco.duckdb](https://github.com/Khoshkhah/duckOSM/releases/download/v0.6.0/monaco.duckdb) (38 MB).
-2. Menu **roadstyle › Open a duckOSM database…**. Choose the file, then **Open**.
-3. The first time takes about 30 seconds (the plugin loads Python in the browser; it starts while you choose the file). Then the map of Monaco is on the screen. The map is on the screen after about 18 seconds, and the street names and the one-way arrows follow a few seconds later (they are made in the background). The next time you open the same file with the same choices, the map comes from the browser's storage and takes about 3 seconds. If you used the plugin before, Python starts by itself a few seconds after GeoLibre opens.
-
-## Input data
-
-| Menu item | Input | How to make it |
-|---|---|---|
-| **Open a duckOSM database…** | a `.duckdb` file | `pip install duckosm`, then `duckosm build --config <area>.yaml`. Or use the Monaco file above. [duckOSM](https://github.com/Khoshkhah/duckOSM) |
-| **Add a roadstyle layer…** | a `style.json` file from your disk (the fast way) or its URL | see below |
-| **Style a layer with roadstyle…** | a data layer in GeoLibre and a look (optional) | see below |
-
-The link `https://web.geolibre.app/?roadstyle=<URL of a style.json>` draws a style when GeoLibre starts (the plugin must be active).
-
-**The fast way: make the style file once, with Python.**
-
-```bash
-pip install mapstyle
-mapstyle monaco.duckdb --inline monaco.json --planner      # 6 seconds; --planner adds the data of the route planner
-```
-
-In GeoLibre: **roadstyle › Add a roadstyle layer…**, choose `monaco.json`. The map opens in about **1 second**, also for a big area. Opening the `.duckdb` file
-itself makes the same file in the browser, where Python is about 3 times slower: the map is on the screen after about 18 seconds for Monaco, with the street names and arrows added about 10 seconds later (the next time you open the same file, the browser has kept the result).
-
-**A `style.json` with the data inside** (the same file, from Python):
-
-```python
-import json
-from mapstyle.export import export_inline          # pip install mapstyle
-json.dump(export_inline("monaco.duckdb"), open("style.json", "w"))
-```
-
-**A `style.json` with vector tiles** (large areas):
-
-```python
-import mapstyle
-from roadstyle.export import export_style          # pip install roadstyle mapbox-vector-tile
-export_style(mapstyle.load_roads("monaco.duckdb"), "out", base_url="https://example.com/out")
-```
-
-Put the files on a server with **https** and **CORS** (GitHub Pages works). GeoLibre cannot read from `http://localhost`.
-
-**A look for a data layer:** `rs.export_look("look.json")` writes a look. The layer needs the columns `highway`, `oneway`, `tunnel`, `bridge`,
-`casing_level` and `fill_level` (duckOSM's `duckosm export-gis --format geoparquet` writes them).
+1. Download [monaco.duckdb](https://github.com/Khoshkhah/duckOSM/releases/download/v0.6.0/monaco.duckdb) (38 MB).
+2. Menu **roadstyle › Open a duckOSM database…**, choose the file, then **Open**.
+3. The map is on the screen after about 18 seconds (the plugin runs Python in the browser). The street names and arrows follow. The same file opens again in about 3 seconds.
 
 ## Route planner
 
-The plugin has the route planner of [duckOSM](https://github.com/Khoshkhah/duckOSM) (`duckosm route-map`), with the same panel. Open a database with
-**Route planner: on** (the default). The panel opens at the right of the map, with a route from a start (A) to an end (B):
+**Where it comes from.** The route planner is duckOSM's (`duckosm route-map`). duckOSM turns OpenStreetMap into a routable network and keeps it in the `.duckdb` file:
+for each mode (driving, walking, cycling) the roads and the turns that are allowed, and the links between walking and driving. The plugin reads this network
+from the file and finds the route in your browser, with turn-by-turn steps, using the same code and the same panel as `duckosm route-map`.
 
-<p align="center"><img src="docs/img/route-planner.jpg" alt="The route planner of roadstyle in GeoLibre: the panel with the time, the length and the steps, and the route on the map" width="860"></p>
+<p align="center"><img src="docs/img/route-planner.jpg" alt="The route planner in GeoLibre: the panel with the time, the length and the steps, and the route on the map" width="860"></p>
 
-- **Drag the two pins** (A start, B end). The route changes at once.
-- **Walk, Cycle, Drive, Walk + drive**, and **Fastest** or **Shortest**.
-- The summary shows the time and the length, with a bar for each leg. The steps are turn by turn: a click on a step zooms the map to it.
-- Click a road to keep its `edge_id` in the panel.
-- The route is a row **route** in the Layers panel: switch it off there.
-
-**Back to the normal map.** Close the panel (the × in its header): the pins and the route go, and the map stays as it was. The menu item
-**roadstyle › Route planner** opens the panel again, and the route comes back. **Remove roadstyle layers** removes the whole map.
-
-**Full screen.** GeoLibre's full screen shows only the map, so the panel becomes a box over the map. The tab "Route planner" hides and shows the box (hiding it also
-leaves routing mode). When you leave full screen, the panel goes back to the side panel.
+- Drag the pins **A** and **B**. The route changes at once.
+- Close the panel (×) to go back to the normal map. **roadstyle › Route planner** opens it again.
+- In full screen, the panel is a box over the map:
 
 <p align="center"><img src="docs/img/route-planner-fullscreen.jpg" alt="The route planner in GeoLibre's full screen: the panel is a box over the map" width="860"></p>
 
-The graphs are in the page, so the planner works for areas up to 150,000 roads. A bigger database opens without it. For a style file, make it with
-`mapstyle monaco.duckdb --inline monaco.json --planner` or `export_inline(db, planner=True)`.
+## Your own data
 
-## The Layers panel
-
-Each map has three folders. The first is on top, and it is drawn last.
-
-| Folder | Rows |
+| You have | Do this |
 |---|---|
-| **Features** | buildings 3D, crossings, traffic signals, bus and train stations, parking signs, bicycle |
-| **Roads** | one row for each road type (bridges, tunnels, motorway … footway), then raceway and other ways |
-| **Background** | paved areas, buildings, railways, parking, platforms, waterways, water, land cover |
+| A duckOSM `.duckdb` file | **roadstyle › Open a duckOSM database…** |
+| A style file (fast: opens in about 1 second) | `mapstyle area.duckdb --inline area.json --planner`, then **roadstyle › Add a roadstyle layer…** |
+| A style URL | **roadstyle › Add a roadstyle layer…**, or the link `https://web.geolibre.app/?roadstyle=<URL>` |
+| A data layer with duckOSM columns | **roadstyle › Style a layer with roadstyle…** |
 
-- The check box of a folder switches all its rows. The **Opacity** slider fades them. The slider of a row fades that row.
-- A click on a road, a raceway or another way opens its popup.
-- Crossings and traffic signals show from zoom 16.
+To make a `.duckdb` file: `pip install duckosm`, then `duckosm build --config area.yaml` ([duckOSM](https://github.com/Khoshkhah/duckOSM)).
 
-## The dialog of "Open a duckOSM database"
+## More
 
-| Choice | Values |
-|---|---|
-| Roads in front | all modes, driving, walking, cycling |
-| Colours | OpenStreetMap (default), Google, Grey, roadstyle default |
-| Footpaths and cycleways | Google, OpenStreetMap, Komoot, CyclOSM |
-| Ocean polygon | off (default: GeoLibre's own map shows the sea), on |
-| 3D bridge decks | off (default), on |
-| Route planner | on (default), off |
-
-## Needs
-
-- A browser with enough memory: the `.duckdb` file is read into memory twice.
-- The network: the plugin loads Pyodide and its packages (numpy, pandas, shapely, geopandas, DuckDB and a few more) from `cdn.jsdelivr.net`, a pinned version (Pyodide 314.0.7).
-  Nothing is installed from PyPI at run time: the roadstyle, mapstyle and branca code is inside the plugin (roadstyle 0.24.2, mapstyle 0.12.0, branca 0.8.2). The code of the zip is
-  minified; the readable source is in this repository.
-
-## Build and test
-
-```bash
-pip install roadstyle mapstyle
-python build.py                                    # makes dist/roadstyle-geolibre.zip
-python -m pytest tests -q -m "not slow"            # a few seconds, in a stand-in for GeoLibre
-python tests/e2e_geolibre.py monaco.duckdb         # the real web.geolibre.app, with a database (minutes)
-python tests/e2e_inputs.py monaco.duckdb           # the real web.geolibre.app, with a style URL and a tiles export
-```
-
-Change `version` in `plugin.json` and in `index.js` together (a test checks that they are equal). GeoLibre trusts a plugin by the hash of
-its files: after a change, remove the plugin and install the new `.zip`.
-
-Design: `docs/design/style_export.md` in the [roadstyle repo](https://github.com/Khoshkhah/roadstyle).
-
-The GeoLibre logo is the icon [docs/assets/geolibre-icon.png](https://github.com/opengeos/GeoLibre/blob/9cf193094e6575bfd152ec020345a8e69b75290c/docs/assets/geolibre-icon.png) of [GeoLibre](https://github.com/opengeos/geolibre) (MIT license).
+[The guide](docs/guide.md): the Layers panel, the dialog choices, the input data in detail, what the plugin needs, how to build and test it.
+Made with [roadstyle](https://github.com/Khoshkhah/roadstyle), [mapstyle](https://github.com/Khoshkhah/mapstyle) and [duckOSM](https://github.com/Khoshkhah/duckOSM), for [GeoLibre](https://github.com/opengeos/geolibre) (MIT license; the GeoLibre logo is its icon
+[docs/assets/geolibre-icon.png](https://github.com/opengeos/GeoLibre/blob/9cf193094e6575bfd152ec020345a8e69b75290c/docs/assets/geolibre-icon.png)).
