@@ -161,6 +161,15 @@ pub fn feature_overlays(fcs: Map<String, Value>, look: &Value, edge_attached: &[
             ov.color = ln.get("color").cloned().unwrap_or(Value::Null);
             ov.width = ln.get("width").cloned().unwrap_or(Value::Null);
             l["dash"] = ln.get("dash").cloned().unwrap_or(Value::Null);
+            // width_zoom: px by zoom (a road's width), the zooms in order
+            l["width_zoom"] = match ln.get("width_zoom").and_then(Value::as_object).filter(|m| !m.is_empty()) {
+                None => Value::Null,
+                Some(m) => {
+                    let mut pairs: Vec<(f64, &str, &Value)> = m.iter().map(|(z, w)| (z.parse::<f64>().unwrap_or(0.0), z.as_str(), w)).collect();
+                    pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    Value::Array(pairs.into_iter().map(|(z, _, w)| json!([if z.fract() == 0.0 { json!(z as i64) } else { json!(z) }, w])).collect())
+                }
+            };
         } else {
             let mut p = points["default"].as_object().cloned().unwrap_or_default();
             for (k, v) in points.get(&name).and_then(Value::as_object).into_iter().flatten() {

@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: steps 1 to 3 of the full port are done: the worker makes the whole map (roads and base map) with no Python (2026-10-22). Steps 4 (the planner data) and 5 (the 3D bridge decks) are next.
+Status: steps 1 to 4 of the full port are done (the worker makes the roads, the base map and the planner data with no Python), checked against roadstyle 0.24.3 and mapstyle 0.12.0 (2026-10-22). Step 5 (the 3D bridge decks) is next.
 
 ## Question
 
@@ -613,3 +613,68 @@ What was added:
 
 **Not in the style yet** (compared with mapstyle's export): the planner data (`metadata["roadstyle:planner"]`, step 4), the 3D bridge decks (step 5),
 and the page metadata that is not drawn (`roadstyle:interaction`, `center`, `zoom`, `name`): small, from the look and the bounds.
+
+## The golden files come from the released versions (2026-10-22)
+
+**What was wrong.** Until step 3, the golden files came from the local mapstyle source, which was at 0.7.0 (its checkout's `main`), and from the
+roadstyle fix branch. The plugin bundles mapstyle 0.12.0 (`py/pkgs.zip`). The road part did not change between them; the base map did.
+
+**Now.** The fixture runs with roadstyle 0.24.3 (the release with the short-road fix: tag `v0.24.3`, on PyPI) and mapstyle 0.12.0 (the PyPI
+wheel), on `PYTHONPATH`. It also runs mapstyle as it runs in the plugin: `mapstyle.map._spatial` is replaced by its Pyodide branch (no spatial
+extension; ST_AsGeoJSON, ST_Area and ST_Centroid are shapely's). So the golden files are what the plugin draws.
+
+**What mapstyle 0.12.0 changed in the base map, and the port of it:**
+
+| Change | In the port |
+|---|---|
+| `background`: the land of `main.boundary`, merged into landcover. Without the spatial extension (the plugin) it is the whole boundary, not the boundary without the sea (`ST_Difference`) | The SQL reads `main.boundary` with the layer's name as the kind, the whole geometry |
+| `paved` areas (squares, pedestrian areas, piers) | Data only |
+| `raceway` and `other_ways`: the ways no mode network holds (`outside_networks`, `_network_ways`) | `osm_id NOT IN` the OSM ids of every `<mode>.edges`, `private_edges` and `edge_id_map`; the layer is skipped when there is no network |
+| `width_zoom`: a line as wide as a road (the raceway) | In `feature_overlays` and the restyle |
+| Building heights: `12,5`, feet (`40 ft`), at most `max_height` (200 m); an older file without `tags` | In `building_height`, and the SQL tries without `tags` |
+| `zoo` in the institutional kinds, four landcover colours | Data only |
+
+**Result.** Natively and in Chromium, the whole map of Monaco equals the golden one: 59 layers and the images with tolerance 0, and the 17 base-map
+sources now with tolerance 0 too (the parking centroids are shapely's GEOS centroid, the algorithm Rust ports). The roads, the pieces, the names
+and arrows and the 12 road-layer subsets did not change. 8 tests pass; the page has the style after 3.1 s.
+
+## Full port, step 4: the planner data, plan (2026-10-22)
+
+**Goal.** The style has the route planner's data, as mapstyle 0.12.0's `export_inline(planner=True)` puts it in `metadata["roadstyle:planner"]`
+(`planner_data`; a database with more than 150,000 roads gets `roadstyle:planner_skipped` instead). The plugin's planner (`planner/planner.js`, from
+duckOSM) reads it.
+
+**What it is** (Monaco: 0.55 s natively in Python, 1.98 MB of JSON): per road of `load_roads` (in its order) its `edge_id`, its two nodes as small
+numbers, its name, length and class, and the roundabouts; per mode (driving, walking, cycling) its turn graph (`<mode>.edges` by `edge_id`: cost,
+length, and the next edges from `<mode>.edge_graph`, a mode's own rows where it has `uses`); walk + drive from `mm.edges` and `mm.transfers`; and the
+start and end of the first route (`_planner_ends`: the road of the first mode whose centroid is nearest to 30 % and 70 % along the diagonal of the
+roads' box, at half its length).
+
+**In the port.** The worker's SQL writes the tables as one `planner.parquet` (a `part` column: the nodes of each edge, a mode's edges, its turns,
+the walk + drive edges and transfers; in the order Python reads them). Rust builds the data: the node numbers, the rounding of Python (`round(x, 1)`,
+`2`, `3`), the first row of an edge that is in several tables, and `_planner_ends` with GEOS's line centroid and `interpolate` (LengthIndexedLine).
+
+**Check.** `metadata["roadstyle:planner"]` equals the golden one (`golden_full.json`, now with `planner=True`) with tolerance 0, natively and in the
+worker.
+
+## Full port, step 4: result (2026-10-22)
+
+**The style has the route planner's data.** `spike/worker/planner_sql.js` writes the planner's tables as `planner.parquet` (the fixture has the same
+SQL in Python); `spike/rust/src/planner.rs` (about 170 lines) builds `metadata["roadstyle:planner"]`: the node numbers, the roads' arrays, the turn
+graph of each mode, walk + drive, and `_planner_ends` (GEOS's line centroid and `interpolate`). Past 150,000 roads it writes
+`roadstyle:planner_skipped`, as `export_inline` does.
+
+**Check.** The planner data equals the golden one (`export_inline(planner=True)`, mapstyle 0.12.0) with tolerance 0, natively and in Chromium: every
+array, the three turn graphs, walk + drive, and the start and end of the first route. `test_rust_style_equals_golden` checks it (8 tests).
+
+Two details on the way: `mm.edges` is a view (no `rowid`), so the SQL keeps a table's or view's reading order with `row_number() OVER ()`; and the line
+centroid sums `length * midpoint` as GEOS does (the order of the operations changes the last bit).
+
+**Time** (Chromium, Monaco): duckdb-wasm start 0.47 s, attach 0.04 s, the roads SQL 0.63 s, the base-map SQL 0.07 s, the planner SQL 0.16 s, Rust 1.82 s:
+3.24 s in the worker, 3.51 s until the page has the style. Natively the planner data takes 0.33 s in Rust (0.55 s in Python): most of it is reading
+150,000 rows as generic maps, which a typed reader would make faster. The Rust code is 3,091 lines; the wasm module is 0.92 MB with gzip.
+
+**What is left** before the worker can replace `py/worker.js`: the 3D bridge decks (step 5, `view_3d`), the page metadata that is not drawn
+(`roadstyle:interaction`, `center`, `zoom`, `name`, `glyphs`, `version`), the other choices of the plugin's dialog (the mode, the colours, the path
+style: today the look is one `look.json` for mode all, `osm` and theme `osm`; the build would make one look per choice), the `split` of the first
+picture (no names and arrows first), and the tuning of the Rust code (a struct per road and piece).

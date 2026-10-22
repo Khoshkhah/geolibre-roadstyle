@@ -5,6 +5,7 @@ pub mod features;
 pub mod geom;
 pub mod layers;
 pub mod overlays;
+pub mod planner;
 pub mod read;
 pub mod roads;
 pub mod simple;
@@ -15,7 +16,7 @@ use serde_json::{json, Value};
 /// The style's layers and sources, as JSON text: the roads ("roads", "simple", "slots") and, with `features` (the base-map tables as the
 /// worker's SQL writes them), the base map ("ov<i>"). `look`: look.json (the resolved look); `parquet`: the roads as
 /// tools/make_spike_fixture.py (or the worker's SQL) writes them.
-pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>) -> Result<String, String> {
+pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, planner: Option<Vec<u8>>) -> Result<String, String> {
     let look_json: Value = serde_json::from_str(look).map_err(|e| format!("look: not JSON: {e}"))?;
     let look = roads::Look::from_json(&look_json)?;
     let mut feats = read::read_roads(parquet, "geometry")?;
@@ -39,7 +40,16 @@ pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>) -> Re
     sources.insert("simple".into(), simple);
     sources.insert("slots".into(), slots);
     images.insert("oneway".into(), look_json["oneway_image"].clone());
-    Ok(json!({"layers": layers, "sources": sources, "metadata": {"roadstyle:images": images}}).to_string())
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("roadstyle:images".into(), Value::Object(images));
+    if let Some(p) = planner {          // export_inline(planner=True): the route planner's graphs, or the number of roads past the limit
+        if feats.len() > planner::PLANNER_MAX_EDGES {
+            metadata.insert("roadstyle:planner_skipped".into(), json!(feats.len()));
+        } else {
+            metadata.insert("roadstyle:planner".into(), planner::planner_data(&feats, p)?);
+        }
+    }
+    Ok(json!({"layers": layers, "sources": sources, "metadata": metadata}).to_string())
 }
 
 fn source_features(source: &Value) -> &[Value] {
@@ -50,9 +60,9 @@ fn source_features(source: &Value) -> &[Value] {
 mod wasm {
     use wasm_bindgen::prelude::*;
 
-    /// makeStyle(roads: Uint8Array, look: string, features?: Uint8Array) -> string; an error is a thrown Error with the message.
+    /// makeStyle(roads: Uint8Array, look: string, features?: Uint8Array, planner?: Uint8Array) -> string; an error is a thrown Error.
     #[wasm_bindgen(js_name = makeStyle)]
-    pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>) -> Result<String, JsError> {
-        super::make_style(parquet, look, features).map_err(|e| JsError::new(&e))
+    pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, planner: Option<Vec<u8>>) -> Result<String, JsError> {
+        super::make_style(parquet, look, features, planner).map_err(|e| JsError::new(&e))
     }
 }

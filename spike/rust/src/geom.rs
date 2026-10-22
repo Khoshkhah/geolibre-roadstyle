@@ -171,8 +171,8 @@ impl Centroid {
                 continue;
             }
             len += d;
-            self.line[0] += d * (w[0][0] + w[1][0]) / 2.0;
-            self.line[1] += d * (w[0][1] + w[1][1]) / 2.0;
+            self.line[0] += d * ((w[0][0] + w[1][0]) / 2.0); // GEOS: segmentLen * midpoint
+            self.line[1] += d * ((w[0][1] + w[1][1]) / 2.0);
         }
         self.length += len;
         if len == 0.0 && !l.is_empty() {

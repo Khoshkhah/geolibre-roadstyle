@@ -6,31 +6,40 @@ use crate::read::read_table;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 
-/// _number: the number at the start of a tag value ("12 m" -> 12.0).
-fn number(text: Option<&str>) -> Option<f64> {
-    let t = text?.trim_start();
+/// _number: the number at the start of a tag value ("12 m" -> 12.0, "12,5" -> 12.5) and the rest of the text.
+fn number(text: Option<&str>) -> Option<(f64, &str)> {
+    let t = text?.trim_start_matches(|c: char| c.is_whitespace());
     let int = t.bytes().take_while(u8::is_ascii_digit).count();
     if int == 0 {
         return None;
     }
     let mut end = int;
-    if t.as_bytes().get(int) == Some(&b'.') {
+    if matches!(t.as_bytes().get(int), Some(b'.' | b',')) {
         let frac = t[int + 1..].bytes().take_while(u8::is_ascii_digit).count();
         if frac > 0 {
             end = int + 1 + frac;
         }
     }
-    t[..end].parse().ok()
+    Some((t[..end].replace(',', ".").parse().ok()?, &t[end..]))
 }
 
-/// building_height: building:levels x m_per_level, else the height tag from min_height, else the height of the kind.
+/// _metres: a height tag in metres: the number, times 0.3048 when its unit is feet ("40 ft", "40'").
+fn metres(text: Option<&str>) -> Option<f64> {
+    let (h, rest) = number(text)?;
+    let unit = rest.trim_start().to_lowercase();
+    let feet = unit.starts_with("ft") || unit.starts_with("feet") || unit.starts_with("foot") || unit.starts_with('\'');
+    Some(if feet { h * 0.3048 } else { h })
+}
+
+/// building_height: building:levels x m_per_level, else the height tag from min_height, else the height of the kind; at most max_height.
 fn building_height(levels: Option<&str>, height: Option<&str>, kind: Option<&str>, cfg: &Value) -> Value {
-    let lv = number(levels);
-    if let Some(l) = lv.filter(|l| *l != 0.0) {
-        return json!(l * cfg["m_per_level"].as_f64().unwrap());
+    let top = cfg.get("max_height").and_then(Value::as_f64).unwrap_or(200.0);
+    let cap = |v: f64| if v <= top { json!(v) } else { cfg.get("max_height").cloned().unwrap_or(json!(200)) };
+    if let Some(l) = number(levels).map(|n| n.0).filter(|l| *l != 0.0) {
+        return cap(l * cfg["m_per_level"].as_f64().unwrap());
     }
-    if let Some(h) = number(height).filter(|h| *h >= cfg["min_height"].as_f64().unwrap()) {
-        return json!(h);
+    if let Some(h) = metres(height).filter(|h| *h >= cfg["min_height"].as_f64().unwrap()) {
+        return cap(h);
     }
     let hs = &cfg["heights"];
     kind.and_then(|k| hs.get(k)).unwrap_or(&hs["default"]).clone()

@@ -818,6 +818,13 @@ fn restyle(layers: Vec<Value>, ovs: &[Overlay]) -> Vec<Value> {
             if ll.get("dash").is_some_and(py_truth) && body_type == "line" {
                 layers[b]["paint"]["line-dasharray"] = ll["dash"].clone();
             }
+            if let Some(wz) = ll.get("width_zoom").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+                if body_type == "line" {
+                    let mut e = vec![json!("interpolate"), json!(["linear"]), json!(["zoom"])];
+                    e.extend(wz.iter().flat_map(|s| s.as_array().cloned().unwrap_or_default()));
+                    layers[b]["paint"]["line-width"] = Value::Array(e);
+                }
+            }
         }
         if let Some(ob) = ll.get("outline_by").filter(|v| py_truth(v)) {
             for &k in lys {

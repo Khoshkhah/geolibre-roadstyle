@@ -36,7 +36,8 @@ def test_rust_style_equals_golden(tmp_path):
     exe = here / "rust" / "target" / "release" / "roadstyle-spike"
     subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
     out = tmp_path / "made.json"
-    subprocess.run([str(exe), str(data / "look.json"), str(data / "roads.parquet"), str(data / "features.parquet"), str(out)], check=True)
+    subprocess.run([str(exe), str(data / "look.json"), str(data / "roads.parquet"), str(data / "features.parquet"), str(data / "planner.parquet"),
+                    str(out)], check=True)
     r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden.json"), str(out), "--only", "sources.roads,sources.simple",
                         "--tol", "0"], capture_output=True, text=True)
     assert r.stdout.strip() == "equal", r.stdout
@@ -45,8 +46,10 @@ def test_rust_style_equals_golden(tmp_path):
     golden, made = json.loads((data / "golden_full.json").read_text()), json.loads(out.read_text())
     assert diff(golden["layers"], made["layers"], tol=0) == []
     ov = [k for k in golden["sources"] if k.startswith("ov")]
-    assert len(ov) == 14 and diff({k: golden["sources"][k] for k in ov}, {k: made["sources"].get(k) for k in ov}, tol=1e-12) == []
+    assert len(ov) == len([k for k in made["sources"] if k.startswith("ov")]) and diff({k: golden["sources"][k] for k in ov}, {k: made["sources"].get(k) for k in ov}, tol=1e-12) == []
     assert golden["metadata"]["roadstyle:images"] == made["metadata"]["roadstyle:images"]
+    # step 4: the route planner's data, with tolerance 0
+    assert diff(golden["metadata"]["roadstyle:planner"], made["metadata"]["roadstyle:planner"], tol=0) == []
     # S6: the names and arrows (the slots), against the export with arrows and labels on
     r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden_slots.json"), str(out), "--only", "sources.slots", "--tol", "0"],
                        capture_output=True, text=True)
@@ -82,7 +85,7 @@ def test_rust_base_map_sources_equal_golden():
     golden = json.loads((data / "golden_full.json").read_text())["sources"]
     strip = lambda fs: [{"properties": {k: v for k, v in f["properties"].items() if k != "edge_id" and not k.startswith("__rs_")},  # noqa: E731
                          "geometry": f["geometry"]} for f in fs]
-    assert len(fcs) == len([k for k in golden if k.startswith("ov")]) == 14
+    assert len(fcs) == len([k for k in golden if k.startswith("ov")])
     for i, (name, fc) in enumerate(fcs.items()):
         assert diff(strip(golden[f"ov{i}"]["data"]["features"]), strip(fc["features"]), tol=1e-12) == [], name
 

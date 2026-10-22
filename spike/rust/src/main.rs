@@ -1,9 +1,10 @@
 //! Spike and full port (docs/design/rust-spike.md): the road part of the style, natively, with the time of each step.
 //!
-//!     cargo run --release -- spike/data/look.json spike/data/roads.parquet spike/data/features.parquet made.json     # features: - for none
+//!     cargo run --release -- spike/data/look.json spike/data/roads.parquet spike/data/features.parquet spike/data/planner.parquet made.json
+//!     (- for no features or no planner)
 //!     cargo run --release -- --layers spike/data/look.json spike/data/layers/all/roads.parquet     # the road layers alone, as {"layers": [...]}
 
-use roadstyle_spike::{layers, overlays, read, roads, simple, slots};
+use roadstyle_spike::{layers, overlays, planner, read, roads, simple, slots};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
@@ -32,15 +33,17 @@ fn main() {
         return;
     }
     let layers_only = args.len() == 4 && args[1] == "--layers";
-    if !layers_only && args.len() != 5 {
-        fail("usage: roadstyle-spike <look.json> <roads.parquet> <features.parquet | -> <out.json>  |  roadstyle-spike --layers <look.json> <roads.parquet>".into());
+    if !layers_only && args.len() != 6 {
+        fail("usage: roadstyle-spike <look.json> <roads.parquet> <features.parquet | -> <planner.parquet | -> <out.json>  |  \
+              roadstyle-spike --layers <look.json> <roads.parquet>".into());
     }
     let (look_path, roads_path) = if layers_only { (&args[2], &args[3]) } else { (&args[1], &args[2]) };
     let look_json = json_file(look_path);
     let look = roads::Look::from_json(&look_json).unwrap_or_else(|e| fail(e));
     let slot_look = slots::SlotLook::from_json(&look_json).unwrap_or_else(|e| fail(e));
     let data = fs::read(roads_path).unwrap_or_else(|e| fail(format!("{roads_path}: {e}")));
-    let fdata = if layers_only || args[3] == "-" { None } else { Some(fs::read(&args[3]).unwrap_or_else(|e| fail(format!("{}: {e}", args[3])))) };
+    let opt = |i: usize| if layers_only || args[i] == "-" { None } else { Some(fs::read(&args[i]).unwrap_or_else(|e| fail(format!("{}: {e}", args[i])))) };
+    let (fdata, pdata) = (opt(3), opt(4));
 
     let ms = |a: Duration, b: Duration| (b - a).as_secs_f64() * 1e3;
     let t = Instant::now();
@@ -74,10 +77,20 @@ fn main() {
     sources.insert("simple".into(), simple);
     sources.insert("slots".into(), slots);
     images.insert("oneway".into(), look_json["oneway_image"].clone());
-    let text = json!({"layers": layers, "sources": sources, "metadata": {"roadstyle:images": images}}).to_string();
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("roadstyle:images".into(), Value::Object(images));
+    if let Some(p) = pdata {
+        if feats.len() > planner::PLANNER_MAX_EDGES {
+            metadata.insert("roadstyle:planner_skipped".into(), json!(feats.len()));
+        } else {
+            metadata.insert("roadstyle:planner".into(), planner::planner_data(&feats, p).unwrap_or_else(|e| fail(e)));
+        }
+    }
+    let t_planner = t.elapsed();
+    let text = json!({"layers": layers, "sources": sources, "metadata": metadata}).to_string();
     let t_json = t.elapsed();
-    fs::write(&args[4], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[4])));
-    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, slots {:.0} ms, base map {:.0} ms, layers {:.0} ms, JSON {:.0} ms ({:.1} MB)",
+    fs::write(&args[5], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[5])));
+    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, slots {:.0} ms, base map {:.0} ms, layers {:.0} ms, planner {:.0} ms, JSON {:.0} ms ({:.1} MB)",
               ms(Duration::ZERO, t_read), ms(t_read, t_roads), ms(t_roads, t_simple), ms(t_simple, t_slots), ms(t_slots, t_base), ms(t_base, t_layers),
-              ms(t_layers, t_json), text.len() as f64 / 1e6);
+              ms(t_layers, t_planner), ms(t_planner, t_json), text.len() as f64 / 1e6);
 }
