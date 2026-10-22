@@ -43,6 +43,8 @@ There is no routing server: the routes are found in your browser, from the netwo
 4. The steps ("Turn right onto…", "At the roundabout, take the 2nd exit…") are made from the heading changes along the route, with the rules of the OSRM maneuver model. A turn is only announced at a real junction (three roads or more).
 5. The panel shows the result, and the route line is drawn on the map.
 
+**Turn restrictions.** Every part of a route follows the allowed turns of its own mode, also in Walk + drive.
+
 **The same answers as duckOSM.** The page of `duckosm route-map` and the plugin use the same code. In duckOSM's own check, the route in the page was the same as the route of its `route()` and `route_multimodal()` functions for 8 of 8 trips in Monaco.
 The plugin does not copy the panel by hand: `tools/make_planner.py` makes `planner/panel.html`, `panel.css` and `planner.js` from duckOSM's `templates/planner.html`, so the two always look the same.
 
@@ -53,7 +55,7 @@ The plugin does not copy the panel by hand: `tools/make_planner.py` makes `plann
 - **Back to the normal map:** close the panel (the × in its header). The pins and the route go, and the map stays as it was. **roadstyle › Route planner** opens the panel again, and the route comes back. **Remove roadstyle layers** removes the whole map.
 - **Full screen:** GeoLibre's full screen shows only the map, so the panel becomes a box over the map. The tab "Route planner" hides and shows the box (hiding it also leaves routing mode). When you leave full screen, the panel goes back to the side panel.
 
-**Limits.** The lists are in the page, so the planner works for databases up to 150,000 roads: a bigger database opens without it. In Walk + drive the route goes from junction to junction and does not see turn restrictions (one mode at a time does). Not in the planner: lane advice, exit numbers, spoken directions.
+**Limits.** The lists are in the page, so the planner works for databases up to 150,000 roads: a bigger database opens without it. Not in the planner: lane advice, exit numbers, spoken directions.
 
 ## Input data
 

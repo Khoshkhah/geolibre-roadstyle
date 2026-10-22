@@ -43,43 +43,62 @@ export function mount(map, RM, H) {
     return {time, len, legs: [{mode, edges: path, time, len}], transfers: 0};
   }
 
-  // ---- across modes: (node, mode, phase) Dijkstra, as route_multimodal() -------------------------
+  // ---- across modes: Dijkstra over roads, as route_multimodal(): every part of the trip follows the
+  // edge_graph of its own mode (turn restrictions included). A state is a road with its cost paid
+  // (kind 0) or a junction just after a change of mode (kind 1), with the phase walk* veh* walk*
   let MM = null;
   if (D.mm) {
-    const N = D.mm.nodes, adj = new Map(), tadj = new Map();
-    for (const [m, s, t, k, c] of D.mm.edges) { const key = m * N + s; if (!adj.has(key)) adj.set(key, []); adj.get(key).push([t, k, c]); }
-    for (const [n, fm, tm, c] of D.mm.transfers) { const key = fm * N + n; if (!tadj.has(key)) tadj.set(key, []); tadj.get(key).push([tm, c]); }
-    MM = {N, adj, tadj};
+    const tadj = new Map(), out = new Map();       // "mode:node" -> changes of mode / roads that leave the node
+    for (const [n, fm, tm, c] of D.mm.transfers) { const key = fm + ":" + n; if (!tadj.has(key)) tadj.set(key, []); tadj.get(key).push([tm, c]); }
+    D.modes.forEach((m, mi) => { for (const k of G[m].k) { const key = mi + ":" + D.src[k]; if (!out.has(key)) out.set(key, []); out.get(key).push(k); } });
+    MM = {tadj, out, span: Math.max(D.n, D.mm.nodes) + 2};
   }
-  // extra: arcs from / to the temporary start / end nodes (a point beside a road), "m:node" ->
-  // [[to, k, cost, part [f0, f1], access_s, cand]] (route_multimodal_points)
-  function routeMulti(sNode, tNode, allowed, extra) {
-    const {N, adj, tadj} = MM, key = (n, m, p) => (n * 8 + m) * 3 + p;
-    const start = key(sNode, hub, 0), dist = new Map([[start, 0]]), prev = new Map(), h = new Heap();
-    h.push(0, [sNode, hub, 0]); let goal = null;
+  // pts: null (from the node sNode to the node tNode) or {S, T: Map(k -> candidate)}, the start and end
+  // candidates on walking roads, v the walking speed (route_multimodal_points)
+  function routeMulti(sNode, tNode, allowed, pts, v) {
+    const {tadj, out, span} = MM, END = -1;
+    const key = (kind, m, id, p) => ((kind * 8 + m) * span + id) * 3 + p;
+    const cost = (m, k) => { const g = G[D.modes[m]]; return g.cost[g.pos.get(k)]; };
+    const dist = new Map(), prev = new Map(), state = new Map(), h = new Heap();
+    const push = (d, s, from, step) => {
+      const kk = s ? key(...s) : END;
+      if (d < (dist.has(kk) ? dist.get(kk) : Infinity)) { dist.set(kk, d); prev.set(kk, [from, step]); state.set(kk, s); h.push(d, kk); }
+    };
+    let direct = null;                               // a trip that starts and ends on one road, forwards
+    if (!pts) push(0, [1, hub, sNode, 0], null, null);
+    else for (const s of pts.S) {
+      const c = cost(hub, s.k), ac = s.d / v;
+      push(ac + (1 - s.f) * c, [0, hub, s.k, 0], null, {k: s.k, m: hub, c: (1 - s.f) * c, part: [s.f, 1], ac, cand: [s]});
+      const t = pts.T.get(s.k);
+      if (t && s.f <= t.f) { const tot = ac + (t.f - s.f) * c + t.d / v;
+        if (!direct || tot < direct.tot) direct = {tot, steps: [{k: s.k, m: hub, c: (t.f - s.f) * c, part: [s.f, t.f], ac: ac + t.d / v, cand: [s, t]}]}; }
+    }
+    let goal = null;
     while (h.a.length) {
-      const [d, [n, m, p]] = h.pop(), st = key(n, m, p); if (d > dist.get(st)) continue;
-      if (n === tNode && m === hub) { goal = st; break; }
-      for (const [t, k, c] of adj.get(m * N + n) || []) {
-        const ns = key(t, m, p), nd = d + c;
-        if (nd < (dist.has(ns) ? dist.get(ns) : Infinity)) { dist.set(ns, nd); prev.set(ns, [st, {k, m, c, part: [0, 1], ac: 0}]); h.push(nd, [t, m, p]); }
-      }
-      for (const [t, k, c, part, ac, cand] of (extra && extra.get(m + ":" + n)) || []) {
-        const ns = key(t, m, p), nd = d + c + ac;
-        if (nd < (dist.has(ns) ? dist.get(ns) : Infinity)) { dist.set(ns, nd); prev.set(ns, [st, {k, m, c, part, ac, cand}]); h.push(nd, [t, m, p]); }
-      }
-      for (const [tm, c] of tadj.get(m * N + n) || []) {
+      const [d, kk] = h.pop(); if (d > dist.get(kk)) continue;
+      if (kk === END) { goal = kk; break; }
+      const s = state.get(kk), [kind, m, id, p] = s, node = kind === 0 ? D.tgt[id] : id;
+      if (!pts && node === tNode && m === hub) { goal = kk; break; }
+      const onto = (k) => {                           // take the road k; maybe stop part-way along it
+        const c = cost(m, k);
+        push(d + c, [0, m, k, p], kk, {k, m, c, part: [0, 1], ac: 0});
+        const t = pts && m === hub && pts.T.get(k);
+        if (t) push(d + t.f * c + t.d / v, null, kk, {k, m, c: t.f * c, part: [0, t.f], ac: t.d / v, cand: [t]});
+      };
+      if (kind === 0) { const g = G[D.modes[m]]; for (const k of g.next[g.pos.get(id)]) onto(k); }
+      else for (const k of out.get(m + ":" + node) || []) onto(k);
+      for (const [tm, c] of tadj.get(m + ":" + node) || []) {
         if (!allowed.has(tm)) continue;
         let np = p;
         if (m === hub && tm !== hub) { if (p !== 0) continue; np = 1; }
         else if (m !== hub && tm === hub) { if (p !== 1) continue; np = 2; }
-        const ns = key(n, tm, np), nd = d + c;
-        if (nd < (dist.has(ns) ? dist.get(ns) : Infinity)) { dist.set(ns, nd); prev.set(ns, [st, {tr: true, c}]); h.push(nd, [n, tm, np]); }
+        push(d + c, [1, tm, node, np], kk, {tr: true, c});
       }
     }
-    if (goal === null) return null;
-    const steps = []; let s = goal; while (s !== start) { const [ps, step] = prev.get(s); steps.push(step); s = ps; }
-    steps.reverse();
+    let steps;
+    if (direct && (goal === null || direct.tot <= dist.get(goal))) steps = direct.steps;
+    else if (goal === null) return null;
+    else { steps = []; for (let s = goal; ;) { const [ps, step] = prev.get(s); if (step) steps.push(step); if (ps === null) break; s = ps; } steps.reverse(); }
     const legs = []; let transfers = 0, trTime = 0, acS = 0, cands = [];
     for (const st of steps) {
       if (st.tr) { transfers++; trTime += st.c; continue; }
@@ -221,23 +240,10 @@ export function mount(map, RM, H) {
     return {time: time + (s.d + t.d) / v, len: len + s.d + t.d, legs: [leg], transfers: 0, start: s, end: t};
   }
 
-  // ---- walk + drive between two points, as route_multimodal_points: temporary nodes joined to
-  // both ends of each walking road within the radius (walking goes both ways), a direct walk when
-  // both points are on one road
+  // ---- walk + drive between two points, as route_multimodal_points: the trip starts and ends
+  // walking, on the roads within the radius, with a direct walk when both points are on one road
   function routeMultiPts(S, T, allowed, v) {
-    const g = G.walking, c = (k) => g.cost[g.pos.get(k)], hubM = D.modes.indexOf("walking");
-    const A = MM.N, B = MM.N + 1, extra = new Map(), add = (from, arc) => {
-      const key = hubM + ":" + from; if (!extra.has(key)) extra.set(key, []); extra.get(key).push(arc); };
-    for (const s of S) { const x = s.d / v;
-      add(A, [D.src[s.k], s.k, s.f * c(s.k), [0, s.f], x, [s]]);
-      add(A, [D.tgt[s.k], s.k, (1 - s.f) * c(s.k), [s.f, 1], x, [s]]); }
-    for (const t of T) { const x = t.d / v;
-      add(D.src[t.k], [B, t.k, t.f * c(t.k), [0, t.f], x, [t]]);
-      add(D.tgt[t.k], [B, t.k, (1 - t.f) * c(t.k), [t.f, 1], x, [t]]); }
-    const Tby = new Map(T.map((t) => [t.k, t]));
-    for (const s of S) { const t = Tby.get(s.k);
-      if (t) add(A, [B, s.k, Math.abs(t.f - s.f) * c(s.k), [Math.min(s.f, t.f), Math.max(s.f, t.f)], (s.d + t.d) / v, [s, t]]); }
-    const r = routeMulti(A, B, allowed, extra);
+    const r = routeMulti(null, null, allowed, {S, T: new Map(T.map((t) => [t.k, t]))}, v);
     if (!r) return null;
     r.start = r.ends[0]; r.end = r.ends[r.ends.length - 1];
     r.len += r.start.d + r.end.d;
@@ -423,8 +429,7 @@ export function mount(map, RM, H) {
   function update() {
     const modes = ticked(), multi = modes.length > 1;
     $("rm-weight").classList.toggle("off", multi);
-    $("rm-note").textContent = multi ? "Walk + drive: the car can be taken at any junction (60 s per change). " +
-      "The route goes from junction to junction, so no leg obeys turn restrictions." : NO_MM;
+    $("rm-note").textContent = multi ? "Walk + drive: the car can be taken at any junction (60 s per change)." : NO_MM;
     if (!markers.A || !markers.B) return;
     const ok = inMode(multi ? "walking" : modes[0]), at = (m) => [m.getLngLat().lng, m.getLngLat().lat];
     const S = cands(at(markers.A), ok), T = cands(at(markers.B), ok);
