@@ -74,6 +74,17 @@ def test_syntax(f):
     subprocess.run(["node", "--check", str(ROOT / f)], check=True)
 
 
+def test_the_zip_in_dist_is_current():
+    """dist/roadstyle-geolibre.zip is what users download: its README, plugin.json and index.js must be the repo's own (build.py --zip after a change)."""
+    import re
+    import zipfile
+    root = Path(__file__).resolve().parent.parent
+    z = zipfile.ZipFile(root / "dist" / "roadstyle-geolibre.zip")
+    assert z.read("README.md").decode() == (root / "README.md").read_text(), "the README in the zip is old: python build.py --zip"
+    assert z.read("plugin.json").decode() == (root / "plugin.json").read_text()
+    assert re.search(r'const VERSION = "([^"]+)"', z.read("index.js").decode())[1] == json.loads((root / "plugin.json").read_text())["version"]
+
+
 def test_menu(host):
     ids = host.evaluate("() => rs.menu.items.map((i) => i.id)")
     assert ids == ["db", "redraw", "add", "look", "planner", "remove"]
