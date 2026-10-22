@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.18.0";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.18.1";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -629,7 +629,7 @@ const pick = (name, label, values, value) => ({name, label, type: "select", valu
 const dbFields = (file, o) => [
   ...(file ? [{name: "file", label: "duckOSM database (.duckdb)", type: "file", accept: ".duckdb", required: true}] : []),
   pick("mode", "Roads in front", [["all", "All modes"], ["driving", "Driving"], ["walking", "Walking"], ["cycling", "Cycling"]], o.mode),
-  pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"], ["roadstyle", "roadstyle (the level editor's look)"]], o.theme),
+  pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"], ["roadstyle", "roadstyle default"]], o.theme),
   pick("paths", "Footpaths and cycleways", [["google", "Google (calm lines)"], ["osm", "OpenStreetMap (dotted)"], ["komoot", "Komoot (bold)"], ["cyclosm", "CyclOSM (blue)"]], o.paths),
   pick("ocean", "Ocean polygon (the blue sea)", [["off", "Off: GeoLibre's own map shows the sea"], ["on", "On, as the mapstyle page"]], o.ocean),
   pick("decks", "3D bridge decks", [["off", "Off"], ["on", "On"]], o.decks),

@@ -1,7 +1,7 @@
 {
   "id": "roadstyle",
   "name": "roadstyle",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "entry": "index.js",
   "description": "Roads in roadstyle's look (casings, drawing positions, tunnels, 3D bridge decks) with their data, from a roadstyle export (style.json), over GeoLibre's own base map.",
   "engines": ["maplibre"]

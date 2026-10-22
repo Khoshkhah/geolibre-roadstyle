@@ -1,6 +1,6 @@
 # roadstyle for GeoLibre
 
-> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.18.0)
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.18.1)
 >
 > In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**, choose the `.zip`, then **Plugins › Installed › roadstyle**.
 > The same file is in this repo as [`dist/roadstyle-geolibre.zip`](dist/roadstyle-geolibre.zip). All versions: [Releases](https://github.com/Khoshkhah/geolibre-roadstyle/releases).
@@ -14,7 +14,7 @@ The plugin adds the menu **roadstyle**:
 
 | Item | Does |
 |---|---|
-| Open a duckOSM database… | A dialog asks for a `.duckdb` file on your disk and for the colours: the roads in front (all modes, driving, walking, cycling), the theme (OpenStreetMap, Google, Grey, roadstyle: the colours of the level editor), the path style (Google, OpenStreetMap, Komoot, CyclOSM) and whether to show all feature layers (crossings, traffic signals, …; the default) or only those that the mapstyle page shows. roadstyle and mapstyle make the map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`). No server and no export. The first time, it loads Python and the packages (about 30 s). A box shows the progress, and Cancel stops it. |
+| Open a duckOSM database… | A dialog asks for a `.duckdb` file on your disk and for the colours: the roads in front (all modes, driving, walking, cycling), the theme (OpenStreetMap, Google, Grey, roadstyle default: roadstyle's own colours), the path style (Google, OpenStreetMap, Komoot, CyclOSM) and whether to show all feature layers (crossings, traffic signals, …; the default) or only those that the mapstyle page shows. roadstyle and mapstyle make the map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`). No server and no export. The first time, it loads Python and the packages (about 30 s). A box shows the progress, and Cancel stops it. |
 | Redraw the database with other colours… | Makes the map of the last file again with other choices, and replaces the first map. |
 | Add a roadstyle layer… | Asks for the URL of a roadstyle export (`style.json`, from `rs.export_style`). The link parameter `?roadstyle=<URL>` does the same. |
 | Style a layer with roadstyle… | Puts a roadstyle look (`rs.export_look`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or GeoParquet layer. Without a look URL, it uses `looks/default.json`. GeoLibre's own line of the layer becomes transparent, and Identify still shows the data. |
