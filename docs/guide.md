@@ -1,6 +1,59 @@
-# roadstyle plugin: the guide
+<p align="center">
+  <a href="https://github.com/Khoshkhah/roadstyle"><img src="img/roadstyle.svg" alt="roadstyle" height="48"></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/Khoshkhah/duckOSM"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/duckosm-inverse.svg">
+    <img src="img/duckosm.svg" alt="duckOSM" height="48">
+  </picture></a>
+  &nbsp;&nbsp;
+  <a href="https://web.geolibre.app"><img src="img/geolibre-icon.png" alt="GeoLibre" height="48"></a>
+</p>
 
-The details of the plugin. The short version is in the [README](../README.md).
+<h1 align="center">The guide</h1>
+
+<p align="center"><a href="../README.md">← back to the README</a></p>
+
+**Contents:** [How it works](#how-it-works) · [Route planner](#route-planner) · [Input data](#input-data) · [The Layers panel](#the-layers-panel) · [The dialog](#the-dialog-of-open-a-duckosm-database) · [Speed](#speed) · [Needs](#needs) · [Build and test](#build-and-test)
+
+## How it works
+
+<p align="center"><img src="img/how-it-works.svg" alt="The .duckdb file of duckOSM goes to Python in the browser (mapstyle and roadstyle), which makes a style and the planner data. GeoLibre draws the style. The routing code in JavaScript uses the planner data and fills the route panel." width="860"></p>
+
+| Piece | What it does for the plugin |
+|---|---|
+| **[duckOSM](https://github.com/Khoshkhah/duckOSM)** | Builds the `.duckdb` file from OpenStreetMap: the roads of each mode, the allowed turns, the links between walking and driving, and the order in which roads are drawn. |
+| **[mapstyle](https://github.com/Khoshkhah/mapstyle)** | Reads the file and makes the whole map as one style (roads, water, buildings, 3D, crossings…). It also cuts out the data of the route planner. |
+| **[roadstyle](https://github.com/Khoshkhah/roadstyle)** | Draws the roads: casings, bridges, tunnels, one-way arrows, street names. |
+| **The plugin** | Runs mapstyle and roadstyle in the browser (Python in WebAssembly), draws the result in GeoLibre, and adds the Layers rows, the filters and the route planner. |
+
+## Route planner
+
+**Where it comes from.** The route planner is duckOSM's. `duckosm route-map` makes a web page with a route planner for a database, and this plugin has the same planner inside GeoLibre.
+There is no routing server: the routes are found in your browser, from the network that is in the `.duckdb` file.
+
+**What is in the file.** duckOSM keeps, for each mode (driving, walking, cycling):
+- the roads, with their length and their travel time (`cost_s`),
+- the turns that are allowed (the `edge_graph` table: from one road to the next; one-way streets and turn restrictions are in it),
+- and, for **Walk + drive**, the links between the walking network and the driving network (the `mm` tables: where you can get in a car, and what a change costs: 60 seconds by default).
+
+**What the plugin does with it.**
+1. `mapstyle` cuts these tables out of the file as compact lists (about 2.3 MB for Monaco). They travel inside the style, in the metadata `roadstyle:planner`.
+2. The routing code in JavaScript finds the best route over these lists: a shortest-path search over the turn graph (one search per mode; for Walk + drive, a search over the mode and the phase of the trip).
+3. A pin is put on the nearest road. If it is a little off the road, the walk to the road counts: 50 m at 4.5 km/h by default (both can be changed in "Settings and details").
+4. The steps ("Turn right onto…", "At the roundabout, take the 2nd exit…") are made from the heading changes along the route, with the rules of the OSRM maneuver model. A turn is only announced at a real junction (three roads or more).
+5. The panel shows the result, and the route line is drawn on the map.
+
+**The same answers as duckOSM.** The page of `duckosm route-map` and the plugin use the same code. In duckOSM's own check, the route in the page was the same as the route of its `route()` and `route_multimodal()` functions for 8 of 8 trips in Monaco.
+The plugin does not copy the panel by hand: `tools/make_planner.py` makes `planner/panel.html`, `panel.css` and `planner.js` from duckOSM's `templates/planner.html`, so the two always look the same.
+
+**Using it**
+- **Drag the two pins** (A start, B end). The route changes at once. Choose **Walk, Cycle, Drive, Walk + drive**, and **Fastest** or **Shortest**.
+- The summary shows the time and the length, with a bar for each leg. A click on a step zooms the map to it. A click on a road keeps its `edge_id` in the panel.
+- The route is a row **route** in the Layers panel: switch it off there.
+- **Back to the normal map:** close the panel (the × in its header). The pins and the route go, and the map stays as it was. **roadstyle › Route planner** opens the panel again, and the route comes back. **Remove roadstyle layers** removes the whole map.
+- **Full screen:** GeoLibre's full screen shows only the map, so the panel becomes a box over the map. The tab "Route planner" hides and shows the box (hiding it also leaves routing mode). When you leave full screen, the panel goes back to the side panel.
+
+**Limits.** The lists are in the page, so the planner works for databases up to 150,000 roads: a bigger database opens without it. In Walk + drive the route goes from junction to junction and does not see turn restrictions (one mode at a time does). Not in the planner: lane advice, exit numbers, spoken directions.
 
 ## Input data
 
@@ -43,18 +96,6 @@ Put the files on a server with **https** and **CORS** (GitHub Pages works). GeoL
 **A look for a data layer:** `rs.export_look("look.json")` writes a look. The layer needs the columns `highway`, `oneway`, `tunnel`, `bridge`,
 `casing_level` and `fill_level` (duckOSM's `duckosm export-gis --format geoparquet` writes them).
 
-## The route planner in detail
-
-- **Drag the two pins** (A start, B end). The route changes at once. **Walk, Cycle, Drive, Walk + drive**, and **Fastest** or **Shortest**.
-- The summary shows the time and the length, with a bar for each leg. The steps are turn by turn: a click on a step zooms the map to it.
-- Click a road to keep its `edge_id` in the panel. The route is a row **route** in the Layers panel: switch it off there.
-- **Back to the normal map.** Close the panel (the × in its header): the pins and the route go, and the map stays as it was. The menu item **roadstyle › Route planner**
-  opens the panel again, and the route comes back. **Remove roadstyle layers** removes the whole map.
-- **Full screen.** GeoLibre's full screen shows only the map, so the panel becomes a box over the map. The tab "Route planner" hides and shows the box (hiding it also
-  leaves routing mode). When you leave full screen, the panel goes back to the side panel.
-- The graphs are in the page, so the planner works for areas up to 150,000 roads. A bigger database opens without it.
-- The panel and its code are made from duckOSM's `templates/planner.html` by `tools/make_planner.py`.
-
 ## The Layers panel
 
 Each map has three folders. The first is on top, and it is drawn last.
@@ -79,6 +120,19 @@ Each map has three folders. The first is on top, and it is drawn last.
 | Ocean polygon | off (default: GeoLibre's own map shows the sea), on |
 | 3D bridge decks | off (default), on |
 | Route planner | on (default), off |
+
+## Speed
+
+Monaco (13,000 roads) in the real GeoLibre. Python in the browser is about three times slower than normal Python, and most of the time is roadstyle's own work (the street names and the arrows are two thirds of it).
+
+| | Time |
+|---|---|
+| First open from the `.duckdb` file: the map is on the screen | about 18 s (6 s to start Python, 10 s to make the map) |
+| The street names and arrows are added | about 10 s later, in the background |
+| The same file again, with the same choices (the browser keeps the map) | about 3 s |
+| A style file made with `mapstyle --inline` | under 1 s |
+
+Python starts when the dialog opens, and by itself a few seconds after GeoLibre opens if you used the plugin before.
 
 ## Needs
 
