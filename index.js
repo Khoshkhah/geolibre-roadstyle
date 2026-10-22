@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.16.0";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.16.1";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -268,9 +268,15 @@ async function addStyle(url) {
 // (crossings, traffic signals), is shown, and the user switches it off in the panel. Sources that no layer uses any more go too.
 const DECKS = "3D bridge decks", OPTIONAL = {ocean: "ocean", [DECKS]: "decks"};
 const groupOf = (l) => (l.metadata && l.metadata["roadstyle:group"]) || "roads";
+// roadstyle's flat road layers skip a bridge from the zoom where its 3D deck starts (["any", ["<", ["zoom"], 16], ["!", __rs_bridge]]).
+// Without the decks nothing would draw the bridge there, so the bridges vanish when the user zooms in: the flat layers draw it at every zoom.
+const isDeckSplit = (f) => Array.isArray(f) && f[0] === "any" && f.length === 3 && Array.isArray(f[1]) && f[1][0] === "<" && JSON.stringify(f[1][1]) === '["zoom"]'
+  && JSON.stringify(f[2]) === '["!",["to-boolean",["get","__rs_bridge"]]]';
+const flatBridges = (f) => isDeckSplit(f) ? true : Array.isArray(f) ? f.map(flatBridges) : f;
 function arrange(style, opts) {
   for (const l of style.layers) if (l.source === "decks") l.metadata = {...(l.metadata || {}), "roadstyle:group": DECKS};   // a group of its own, not part of "roads"
   style.layers = style.layers.filter((l) => !(groupOf(l) in OPTIONAL) || opts[OPTIONAL[groupOf(l)]] === true);
+  if (opts.decks !== true) for (const l of style.layers) if (l.filter) l.filter = flatBridges(l.filter);
   for (const l of style.layers) if (l.layout && l.layout.visibility === "none") l.layout.visibility = "visible";
   const used = new Set(style.layers.map((l) => l.source));
   for (const k of Object.keys(style.sources)) if (!used.has(k)) delete style.sources[k];

@@ -141,6 +141,23 @@ def test_ocean_and_decks_are_left_out_unless_chosen(host):
     assert host.errors == []
 
 
+def test_bridges_stay_drawn_when_zooming_in_without_the_decks(host):
+    """roadstyle's flat layers skip a bridge from zoom 16, where its 3D deck starts. Without the decks (the default) the plugin draws the
+    bridge at every zoom; with the decks the split stays."""
+    out = host.evaluate("""async () => {
+        const mod = await import('/index.js');
+        const st = await (await fetch('/tests/style.json')).json();
+        const split = ['any', ['<', ['zoom'], 16.0], ['!', ['to-boolean', ['get', '__rs_bridge']]]];
+        st.layers.find((l) => l.id === 'roads').filter = ['all', ['!', ['to-boolean', ['get', '__rs_dup']]], split];
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'a', 'style');
+        await mod.__test.addStyleObject(JSON.parse(JSON.stringify(st)), 'b', 'style', {decks: true});
+        return {off: JSON.stringify(rs.map.getFilter('rs0-roads')), on: JSON.stringify(rs.map.getFilter('rs1-roads'))};
+    }""")
+    assert "__rs_bridge" not in out["off"] and "zoom" not in out["off"]
+    assert "__rs_bridge" in out["on"] and "zoom" in out["on"]
+    assert host.errors == []
+
+
 def test_features_that_the_page_starts_hidden_are_shown(host):
     """GeoLibre ignores the starting visibility of a row, so the plugin shows every group: the user switches it off in the panel."""
     vis = host.evaluate("""async () => {

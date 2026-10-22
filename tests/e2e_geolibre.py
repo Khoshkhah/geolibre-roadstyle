@@ -106,6 +106,18 @@ def main(db, out=None):
         print("feature layers:", feat)
         assert feat["crossings"]["layers"] > 0 and feat["crossings"]["visible"] == feat["crossings"]["layers"], feat
         assert feat["crossings"]["drawn"] > 0, feat
+        # 2b) a bridge stays drawn when the user zooms in (the flat road layers skip a bridge from zoom 16, where the 3D deck would start: 0.16.1)
+        br = pg.evaluate("""() => { const m = window.__rs.map, fill = m.getStyle().layers.find((l) => l.id.endsWith('roads-fill'));
+            const f = m.querySourceFeatures(fill.source, {filter: ['to-boolean', ['get', '__rs_bridge']]})[0];
+            if (!f) return null;
+            let c = f.geometry.coordinates; while (Array.isArray(c[0])) c = c[Math.floor(c.length / 2)];
+            m.jumpTo({center: c, zoom: 17.5, pitch: 0, bearing: 0}); return {fill: fill.id, c}; }""")
+        print("a bridge at", br)
+        if br:
+            pg.wait_for_timeout(5000)
+            n = pg.evaluate("(id) => window.__rs.map.queryRenderedFeatures({layers: [id]}).filter((f) => f.properties.__rs_bridge === true || f.properties.__rs_bridge === 'true' || f.properties.__rs_bridge === 1).length", br["fill"])
+            print("bridge pieces drawn at zoom 17.5:", n)
+            assert n > 0, "the bridges vanish when zooming in"
         # GeoLibre puts a folder at the place of its first row: the features must be drawn over the roads, as on the mapstyle page
         order = pg.evaluate("""() => { const L = window.__rs.map.getStyle().layers, g = (l) => l.metadata && l.metadata['roadstyle:group'];
             const at = (name, first) => { const k = L.map((l, i) => g(l) === name ? i : -1).filter((i) => i >= 0); return first ? Math.min(...k) : Math.max(...k); };
