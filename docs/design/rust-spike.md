@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: S0, S1 (smaller form) and S2 are done (2026-10-22). S3 (the source `simple`) is next.
+Status: S0, S1 (smaller form) and S2 are done. The browser profile is done (see "Where the browser time goes"). S3 waits for a decision (2026-10-22).
 
 ## Question
 
@@ -155,3 +155,37 @@ Decisions:
 Times on this computer, native, Monaco: read the Parquet file 44 ms, the stages 230 ms, the JSON 110 ms (13.9 MB). The stages are not tuned yet: they use text keys and a map per feature.
 
 Check: `python -m pytest spike/test_compare.py -q` (5 tests). The test `test_rust_style_equals_golden` builds the crate and compares `layers` and `sources.roads` with the golden file.
+
+## Where the browser time goes (2026-10-22)
+
+Measured with `spike/profile/` : the same Python profile (`rs_profile.py`, a timer around each stage function) natively and in Pyodide in headless Chromium (`run_browser.py`, the plugin's own setup: the CDN version, the packages, `py/pkgs.zip`). Monaco, `export_inline(planner=True)`, the full export. Run 1 is the first map of the session, run 2 the second (warm).
+
+| Stage | Native | Browser, run 1 | Browser, run 2 |
+|---|---|---|---|
+| Pyodide start + packages (once per session, CDN files in the cache) | — | 5.4 s | — |
+| **Names and arrows** (`_annotation_slots`) | 2.9 s | **5.8 s** | 5.0 s |
+| Roads: read from DuckDB (`load_roads`) | 0.2 s | 1.3 s | 0.8 s |
+| Roads: GeoDataFrame to GeoJSON (`fc_dict`; no DuckDB spatial in wasm, so the slow path) | 0.2 s | 1.2 s | 1.1 s |
+| Roads: the marks (`_mark_*`) | 0.2 s | 0.3 s | 0.2 s |
+| Simple: casing parts | 0.7 s | 1.2 s | 1.1 s |
+| Simple: pieces, stubs, mitres | 0.3 s | 0.4 s | 0.2 s |
+| Planner data (SQL) | 0.2 s | 0.7 s | 0.7 s |
+| Features layers: read + overlays + restyle | 0.4 s | 0.6 s | 0.4 s |
+| Decks (3D) | 0.1 s | 0.2 s | 0.2 s |
+| Stored levels | 0.1 s | 0.2 s | 0.1 s |
+| Everything else | 0.5 s | 0.7 s | 0.6 s |
+| **Total `export_inline`** | **5.6 s** | **12.5 s** | **10.3 s** |
+| `json.dumps` of the style (47 MB) | 0.4 s | 0.6 s | 0.5 s |
+
+Pyodide is about 2.2 times slower than native overall; DuckDB reads are 4 to 6 times slower (one thread, no spatial extension).
+
+**What this means for the spike.**
+- **What the spike ports (roads + simple) is 4.4 s of the 12.5 s** of the first map (2.8 s roads, 1.6 s simple). S2's Rust does the roads part in 0.4 s natively. A Rust module for both saves about 3 s of the time to the first picture, which is Python start (5.4 s) + everything but the names and arrows (6.7 s) + the transfer and MapLibre: about 25 %.
+- **The names and arrows are the biggest single stage (5.8 s, 46 %)**, but in the plugin they run after the first picture (the `split` mode of `py/worker.js`), so they delay the names, not the map.
+- **The Python start (5.4 s here, 6 s in the guide, 30 s with the first download) does not change** until Pyodide is gone. That needs the full port: roads, simple, names and arrows, features layers, planner data, decks, and a reader of the `.duckdb` file (duckdb-wasm in JavaScript, or Parquet written by `duckosm`). The levels solver can stay offline (`duckosm levels`).
+
+**Decision rule, as set before the measurement:** roads + simple at 4 s or more of the map time means S3 and S4 go on. It is 4.4 s. But the honest aim changes: the spike is a go / no-go for the **full port** (the only way to remove the Python start and the first download), not for a hybrid. A hybrid (Rust next to Pyodide) gains about 3 s and adds a second copy of the drawing logic; it is not worth shipping. S3 is the step that shows whether the hardest geometry (seams, laps, stubs, halves) can be ported exactly, which is the main unknown of the full port.
+
+Cheap wins in Python, seen on the way (not part of the spike): `fc_dict` takes the GeoPandas path in the browser (1.2 s) because DuckDB wasm has no spatial extension; the planner data is 0.7 s of `fetchall` loops that could be one SQL.
+
+Rerun: `mapstyle/.venv/bin/python spike/profile/rs_profile.py monaco.duckdb` (native, 6 s) and `... spike/profile/run_browser.py monaco.duckdb` (browser, about 40 s).

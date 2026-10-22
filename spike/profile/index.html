@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rs profile</title>
+<script type="module">
+  const w = new Worker("worker.js", {type: "module"});
+  w.onmessage = ({data}) => { window.__result = data; };
+  w.onerror = (e) => { window.__result = {error: "worker: " + (e.message || "could not start")}; };
+  const [pkgs, db, profile] = await Promise.all([
+    fetch("pkgs.zip").then((r) => r.arrayBuffer()),
+    fetch("monaco.duckdb").then((r) => r.arrayBuffer()),
+    fetch("rs_profile.py").then((r) => r.text()),
+  ]);
+  w.postMessage({pkgs, db, profile}, [pkgs, db]);
+</script>
+<p>profiling…</p>
