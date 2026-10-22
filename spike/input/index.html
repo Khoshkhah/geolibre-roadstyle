@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>duckdb-wasm probe</title>
+<script type="module">
+  // Condition 3 of docs/design/rust-spike.md: can duckdb-wasm (?v=<version>) open the duckOSM file and run mapstyle's roads query in the
+  // browser, how big is it and how long does it take. The result goes to window.__result.
+  const v = new URLSearchParams(location.search).get("v");
+  const ms = (t) => Math.round(performance.now() - t);
+  const CHECK = `SELECT count(*) AS n, md5(string_agg(edge_id || '|' || coalesce(highway, '') || '|' || coalesce(name, '') || '|' || hex(geometry), ',' ORDER BY edge_id)) AS md5 FROM 'roads.parquet'`;
+  const out = {v};
+  try {
+    let t = performance.now();
+    const duckdb = await import(`https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${v}/+esm`);
+    const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    const wurl = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], {type: "text/javascript"}));
+    const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), new Worker(wurl));
+    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    const conn = await db.connect();
+    out.startMs = ms(t);
+    out.bundle = bundle.mainModule.split("/").pop();
+    out.duckdb = (await conn.query("SELECT version() AS v")).toArray()[0].v;
+
+    t = performance.now();
+    const file = new Uint8Array(await (await fetch("monaco.duckdb")).arrayBuffer());
+    out.fileMB = file.length / 1e6;
+    out.fetchMs = ms(t);
+    t = performance.now();
+    await db.registerFileBuffer("monaco.duckdb", file);
+    await conn.query("ATTACH 'monaco.duckdb' AS monaco (READ_ONLY)");
+    await conn.query("USE monaco");
+    out.attachMs = ms(t);
+
+    const sql = (await (await fetch("roads.sql")).text()).split(/;\s*\n\s*\n/).map((s) => s.trim().replace(/;$/, "")).filter(Boolean);
+    t = performance.now();
+    for (const s of sql) await conn.query(s);
+    out.sqlMs = ms(t);
+    t = performance.now();
+    const parquet = await db.copyFileToBuffer("roads.parquet");
+    out.copyMs = ms(t);
+    out.parquetMB = parquet.length / 1e6;
+    const c = (await conn.query(CHECK)).toArray()[0];
+    out.rows = Number(c.n);
+    out.md5 = c.md5;
+
+    // the size of the module on the wire: fetch it once more from the page, where the resource timing sees it
+    await (await fetch(bundle.mainModule)).arrayBuffer();
+    const e = performance.getEntriesByName(bundle.mainModule).pop();
+    out.wasmMB = e ? e.decodedBodySize / 1e6 : null;
+    out.wasmWireMB = e ? e.encodedBodySize / 1e6 : null;
+  } catch (err) {
+    out.error = String(err && (err.message || err)).slice(0, 1500);
+  }
+  window.__result = out;
+</script>
+<p>probing…</p>

@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: S0 to S4 and S6 are done; conditions 1 (the knife edge, on a roadstyle branch) and 2 (the names and arrows) are met. Condition 3 (the input) is open (2026-10-22).
+Status: S0 to S4 and S6 are done, and the three conditions of the decision are answered (2026-10-22). Next: the full port, if you decide so.
 
 ## Question
 
@@ -377,3 +377,59 @@ The wasm module is 3.78 MB, 0.78 MB with gzip.
 | 3D decks | Not started: a polygon buffer |
 | The levels solver | Stays offline (`duckosm levels`) |
 | The plugin's worker | Not started: `py/worker.js` calls Pyodide; the Rust module goes in its place when all of the above is done |
+
+## Condition 3: the input (2026-10-22)
+
+**Question.** The browser gets a duckOSM `.duckdb` file. Can duckdb-wasm read it and give the Rust module its tables, or must `duckosm` export Parquet?
+
+**The probe** (`spike/input/`): `make_sql.py` takes mapstyle's own roads SQL (`_roads_union` and the statement of `load_roads`, with `ST_AsWKB`) and ends it with
+`COPY ... TO 'roads.parquet'`. `run_browser.py` runs it natively and, in headless Chromium, with duckdb-wasm from jsdelivr (a new browser for each version:
+a cold cache), and compares the rows with a checksum (count and md5 of the rows in `edge_id` order).
+
+| duckdb-wasm | DuckDB inside | Result | Module (on the wire / decoded) | Start, cold | Attach | Roads SQL + Parquet |
+|---|---|---|---|---|---|---|
+| 1.32.0 (the last stable release, 2025-12) | 1.4.3 | **Fails**: `ST_AsWKB` is not in the core of 1.4 (the file's `GEOMETRY` type is core from DuckDB 1.5) | — | — | — | — |
+| 1.33.1-dev57.0 (2026-06, the `latest` tag) | 1.5.4 | **The same 13,298 rows as native** | 7.1 MB / 35.9 MB | 0.75 s | 56 ms | 708 ms |
+| 1.33.1-dev65.0 (2026-09) | 1.5.6 | **The same rows** | 6.2 MB / 36.0 MB | 2.3 s | 51 ms | 747 ms |
+| (native DuckDB 1.5.4) | | | | | | 41 ms |
+
+The file was written by DuckDB 1.5.3. The Parquet file from the browser is 1.08 MB, and the Rust module reads Parquet already (S2), so duckdb-wasm hands it
+the tables through Parquet bytes with no new Rust code.
+
+**The two routes compared.**
+
+| | duckdb-wasm in the worker | Parquet from `duckosm` (offline) |
+|---|---|---|
+| The input | The `.duckdb` file, as today | A new file (or files) next to the `.duckdb` |
+| Download | 6 to 7 MB once (cached after) | nothing |
+| Time in the browser | 0.75 to 2.3 s start + 0.05 s attach + the SQL (0.7 s for the roads; the other tables are not measured) | the read only (42 ms for the roads, S2) |
+| Risk | Only dev builds of duckdb-wasm carry DuckDB 1.5: pin one (1.33.1-dev57.0 or later) and test it | A second file to keep in step with the database; every table (features, planner, levels) needs an export |
+| Work | The SQL builders of mapstyle (`_roads_union`, the planner and features queries) move to JavaScript or Rust | An export command in `duckosm` or `mapstyle` |
+
+**Decision: duckdb-wasm.** It keeps what the plugin promises today (open a duckOSM `.duckdb` in the browser, no server, no extra step), and its cost is small
+next to Pyodide's (5.4 s and tens of MB before the first line of Python). A Parquet export can stay as the fast path, as the style file is today.
+
+**An estimate of the first map with the full port** (Monaco, not measured as a whole): duckdb-wasm start 0.75 s + attach 0.05 s + SQL about 1 to 1.5 s (the
+roads 0.7 s, the other tables not measured) + Rust 1.5 s (S6) + the transfer and MapLibre. That is about 4 s, against about 18 s today (the guide).
+
+## Where the spike ends (2026-10-22)
+
+All three conditions of the decision are answered:
+
+1. **The knife edge:** fixed on roadstyle branch `fix/short-road-one-cut` (pushed, no PR, not released).
+2. **The names and arrows:** ported exactly (S6), about 0.2 s in wasm against 5.8 s in Pyodide.
+3. **The input:** duckdb-wasm 1.33.1-dev (DuckDB 1.5) reads the file and gives the same rows as native.
+
+**The full port, by step** (each with the same method: a golden file from Python, a port in the Python order, a compare with tolerance 0 natively):
+
+| Step | Work | Size (Python) |
+|---|---|---|
+| 1 | The worker: duckdb-wasm and the Rust module in place of Pyodide, the roads input from SQL (the level columns, `access`, `is_directed`, `has_arrows`, which `render_map` adds) | the SQL of `load_roads` and `stored_levels`, about 100 lines of `render_map` |
+| 2 | The layers in Rust: the expression builders and the data flags (S1) | about 25 builders |
+| 3 | The base-map layers (`features.*`, `feature_overlays`, `_restyle`) | about 400 lines |
+| 4 | The planner data | about 80 lines of SQL |
+| 5 | The 3D decks (a polygon buffer: a tolerance, not exact) | about 150 lines |
+| 6 | Rust tuning (a struct per road and per piece), and a test on a larger area than Monaco | — |
+
+Open, not decided by the spike: who keeps the Rust copy equal to roadstyle and mapstyle after each release (the golden test finds a difference, someone
+must port it), and which duckdb-wasm dev build to pin.
