@@ -13,6 +13,10 @@ pub mod slots;
 
 use serde_json::{json, Value};
 
+/// The most roads of one map: the style is made as JSON trees in the module's memory, which a browser keeps under 4 GB (Tartu, 63,965 roads:
+/// 1.9 GB; docs/design/rust-spike.md).
+pub const MAX_ROADS: usize = 100_000;
+
 /// The style's layers and sources, as JSON text: the roads ("roads", "simple", "slots") and, with `features` (the base-map tables as the
 /// worker's SQL writes them), the base map ("ov<i>"). `look`: look.json (the resolved look); `parquet`: the roads as
 /// tools/make_spike_fixture.py (or the worker's SQL) writes them.
@@ -20,6 +24,10 @@ pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, plann
     let look_json: Value = serde_json::from_str(look).map_err(|e| format!("look: not JSON: {e}"))?;
     let look = roads::Look::from_json(&look_json)?;
     let mut feats = read::read_roads(parquet, "geometry")?;
+    if feats.len() > MAX_ROADS {
+        return Err(format!("this area has {} roads, and the plugin draws at most {MAX_ROADS} (the browser's memory): use a smaller area",
+                           feats.len()));
+    }
     roads::mark_roads(&mut feats, &look);
     let roads = roads::roads_source(&feats);
     let simple = simple::simple_source(&feats, look.head_m, look.bridge_shadow)?;
@@ -32,13 +40,22 @@ pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, plann
         (ovs, images) = overlays::feature_overlays(fcs, &look_json, &attached);
     }
     let layers = layers::road_layers(&look_json, source_features(&roads), source_features(&simple), source_features(&slots), &mut ovs)?;
-    let mut sources = serde_json::Map::new();
-    sources.insert("roads".into(), roads);
+    let glyphs = !source_features(&slots).is_empty();
+    // The sources become text now, one at a time, and each tree is freed at once: a big area's trees are the most of the memory (Tartu: the
+    // peak went from 4.3 GB to 2.5 GB natively). The text has the keys in the order of the style before: roads, ov<i>, simple, slots.
+    let mut sources = vec![("roads".to_string(), roads.to_string())];
+    drop(roads);
     for (i, ov) in ovs.into_iter().enumerate() {
-        sources.insert(format!("ov{i}"), json!({"type": "geojson", "data": ov.fc, "generateId": true}));
+        let mut s = serde_json::Map::new();
+        s.insert("type".into(), "geojson".into());
+        s.insert("data".into(), ov.fc);
+        s.insert("generateId".into(), true.into());
+        sources.push((format!("ov{i}"), Value::Object(s).to_string()));
     }
-    sources.insert("simple".into(), simple);
-    sources.insert("slots".into(), slots);
+    sources.push(("simple".into(), simple.to_string()));
+    drop(simple);
+    sources.push(("slots".into(), slots.to_string()));
+    drop(slots);
     images.insert("oneway".into(), look_json["oneway_image"].clone());
     let mut metadata = serde_json::Map::new();
     // the export's page metadata: the road popup's fields, the hover tooltip and the hover delay (roadstyle:interaction)
@@ -53,12 +70,22 @@ pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, plann
         }
     }
     let (center, zoom) = camera(&feats);
-    let mut style = json!({"version": 8, "name": name.map_or_else(|| look_json["args"]["name"].clone(), Value::from), "center": center, "zoom": zoom,
-                           "layers": layers, "sources": sources, "metadata": metadata});
-    if style["sources"].get("slots").is_some_and(|s| s["data"]["features"].as_array().is_some_and(|f| !f.is_empty())) {
-        style["glyphs"] = look_json["theme"]["labels"]["glyphs"].clone();      // the names' font (roadstyle: when there are labels)
+    drop(feats);
+    let name = name.map_or_else(|| look_json["args"]["name"].clone(), Value::from);
+    let metadata = Value::Object(metadata).to_string();
+    let mut out = String::with_capacity(sources.iter().map(|(_, s)| s.len() + 16).sum::<usize>() + metadata.len() + (1 << 20));
+    out += &format!(r#"{{"version":8,"name":{name},"center":{center},"zoom":{zoom},"layers":{},"sources":{{"#, Value::Array(layers));
+    for (i, (k, s)) in sources.into_iter().enumerate() {
+        out += &format!("{}{}:", if i > 0 { "," } else { "" }, Value::from(k));
+        out += &s;
     }
-    Ok(style.to_string())
+    out += r#"},"metadata":"#;
+    out += &metadata;
+    if glyphs {
+        out += &format!(r#","glyphs":{}"#, look_json["theme"]["labels"]["glyphs"]);      // the names' font (roadstyle: when there are labels)
+    }
+    out.push('}');
+    Ok(out)
 }
 
 /// roadstyle.export._camera: the centre and the zoom that fit the roads' bounds in a 1024 x 768 px view, as the page's fitBounds.
@@ -74,6 +101,11 @@ fn camera(feats: &[read::Feature]) -> (Value, Value) {
     let zx = (1024.0 / 256.0 * 360.0 / (x1 - x0).max(1e-9)).log2();
     let zy = (768.0 / 256.0 * 2.0 * std::f64::consts::PI / (y(y1) - y(y0)).max(1e-9)).log2();
     (json!([(x0 + x1) / 2.0, (y0 + y1) / 2.0]), json!(layers::py_round(zx.min(zy).clamp(0.0, 18.0), 2)))
+}
+
+/// A JSON object made by moving its values in. json!({..}) serializes each value by reference: a deep copy of a big tree (a source's features).
+pub(crate) fn obj<const N: usize>(kv: [(&str, Value); N]) -> Value {
+    Value::Object(kv.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
 fn source_features(source: &Value) -> &[Value] {

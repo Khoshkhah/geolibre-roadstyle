@@ -411,7 +411,8 @@ pub fn slots_source(roads: &[Feature], look: &SlotLook) -> Value {
                     if *tun {
                         p.insert("__rs_tunnel".into(), true.into());
                     }
-                    feats.push(json!({"type": "Feature", "properties": p, "geometry": {"type": "LineString", "coordinates": coords}}));
+                    feats.push(crate::obj([("type", "Feature".into()), ("properties", Value::Object(p)),
+                                           ("geometry", crate::obj([("type", "LineString".into()), ("coordinates", json!(coords))]))]));
                 }
             }
         }
@@ -435,5 +436,5 @@ pub fn slots_source(roads: &[Feature], look: &SlotLook) -> Value {
         let e = f["properties"]["__rs_edge"].as_u64().unwrap() as usize;
         f["properties"]["__rs_cls"] = roads[e].props.get("highway").cloned().unwrap_or(Value::Null);
     }
-    json!({"type": "geojson", "data": {"type": "FeatureCollection", "features": feats}})
+    crate::obj([("type", "geojson".into()), ("data", crate::obj([("type", "FeatureCollection".into()), ("features", Value::Array(feats))]))])
 }

@@ -3,7 +3,7 @@
 // spike crate) makes the style from them: the roads, their layers (step 2), the base map (step 3) and the route planner's data (step 4).
 // The look still comes from Python at build time (look.json).
 // Message in: {db: ArrayBuffer, look: string}. Out: {style, parquet, times} or {error}.
-import init, {makeStyle} from "./pkg/roadstyle_spike.js";
+import init, {makeStyle, memoryBytes} from "./pkg/roadstyle_spike.js";
 import {writeRoads} from "./roads_sql.js";
 import {writeFeatures} from "./features_sql.js";
 import {writePlanner} from "./planner_sql.js";
@@ -51,6 +51,7 @@ onmessage = async ({data}) => {
     const t = performance.now();
     const style = makeStyle(parquet, data.look, features, planner);
     times.rust = Math.round(performance.now() - t);
+    times.wasmMB = Math.round(memoryBytes() / 1e6);      // the module's memory after the style (it does not shrink)
     times.total = Math.round(performance.now() - t0);
     await conn.close();
     await db.terminate();

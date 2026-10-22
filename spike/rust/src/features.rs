@@ -68,13 +68,13 @@ pub fn feature_collections(parquet: Vec<u8>, look: &Value) -> Result<Map<String,
             props.insert("height".into(), building_height(r["levels"].as_str(), r["height"].as_str(), r["kind"].as_str(), b3d));
         }
         let name = r["layer"].as_str().unwrap_or_default().to_string();
-        out.entry(name).or_default().push((area, json!({"type": "Feature", "properties": props, "geometry": g.geojson()})));
+        out.entry(name).or_default().push((area, crate::obj([("type", "Feature".into()), ("properties", Value::Object(props)), ("geometry", g.geojson())])));
     }
     Ok(out.into_iter().map(|(name, mut fs)| {
         if kind_of(&name) == "polygon" {
             fs.sort_by(|a, b| b.0.total_cmp(&a.0)); // stable: largest first, ties in reading order
         }
         let features: Vec<Value> = fs.into_iter().map(|(_, f)| f).collect();
-        (name, json!({"type": "FeatureCollection", "features": features}))
+        (name, crate::obj([("type", "FeatureCollection".into()), ("features", Value::Array(features))]))
     }).collect())
 }

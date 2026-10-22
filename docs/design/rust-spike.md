@@ -822,3 +822,44 @@ replaces the Python one as roadstyle 0.21.0, with the same plugin id, (4) then t
 
 **In GeoLibre** (preview `0.21.0-rust.5`, Monaco, `spike/plugin/e2e_preview.py`): the first map 6.7 s; the same file and choices again 2.7 s (from
 the browser's storage); walking, grey and Komoot 4.6 s.
+
+## Step 2: a bigger area and the memory (2026-10-22)
+
+**The areas.** Only Monaco (13,298 roads) and Sundbyberg (15,425) have stored levels. On copies, `duckosm levels` made them for Tartu (63,965
+roads in the map, 16 s) and Vancouver (356,433 roads, 5 min).
+
+**Before** (Tartu, Chromium): the Rust step 9.8 s and 3.4 GB of WebAssembly memory, near the browser's 4 GB; a 226 MB style. Natively the peak
+was 4.3 GB. Where (a counting allocator in a native build, one stage at a time):
+
+| Stage | In use after it | Peak in it |
+|---|---|---|
+| Read the roads | 473 MB | 511 MB |
+| Roads source | 971 MB | 1,489 MB |
+| Casing pieces | 2,021 MB | 3,140 MB |
+| Planner | 2,251 MB | 3,575 MB |
+| Assemble the style | 4,048 MB | 4,048 MB |
+| Write the text | 4,317 MB | 4,317 MB |
+
+**The cause:** serde_json's `json!` macro serializes its values by reference, so `json!({"data": {"features": features}})` makes a deep copy of
+a big tree while the tree is still in use; the style was assembled the same way.
+
+**The changes:**
+1. `obj([...])` builds a JSON object by moving its values in. It replaces `json!` wherever a big tree goes into an object (the four sources,
+   the base-map collections, each feature).
+2. After the layers, each source becomes text at once and its tree is freed; the style is joined from the texts in the order of before.
+3. `MAX_ROADS = 100,000`: a bigger area gets the message "this area has N roads, and the plugin draws at most 100000 (the browser's memory):
+   use a smaller area", not a crash.
+
+**After** (Tartu): natively a 2.47 GB peak and 7.0 s (from 4.3 GB and 14.8 s); in Chromium 1.9 GB and 7.1 s. In GeoLibre (preview, Tartu): the
+first map 22.4 s (Rust 7.4 s, sending the style 3.9 s, MapLibre 8.3 s), the same again 11.2 s, other choices 17.5 s; the route planner works.
+All golden tests are equal as before.
+
+**The Python plugin cannot draw Tartu:** its map fails after 38 s with `Unexpected token 'N', ...""footway",NaN,"servi"... is not valid JSON`
+(the Python export writes NaN in a road property). The Rust version writes valid JSON for the same file.
+
+**Vancouver** (356,433 roads) would need about 13 GB and a 1.2 GB style: too big for a style with the data inside, in Rust or in Python. Such an
+area needs another design (vector tiles).
+
+**What is left in memory** (for later, if areas between 64,000 and 100,000 roads matter): the source trees while the layers are made (about
+2.4 GB natively for Tartu), and the planner's rows as JSON maps (1.3 GB for a short time). Typed pieces and a typed planner reader would
+make both smaller.

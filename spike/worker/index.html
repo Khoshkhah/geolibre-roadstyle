@@ -7,7 +7,10 @@
   const w = new Worker("worker.js", {type: "module"});
   w.onerror = (e) => { window.__result = {error: "worker: " + (e.message || "could not start")}; };
   w.onmessage = ({data}) => {
-    window.__result = {...data, parquet: data.parquet ? Array.from(data.parquet) : null, pageMs: Math.round(performance.now() - t0)};
+    const pageMs = Math.round(performance.now() - t0);
+    window.__result = location.search.includes("times")            // ?times: only the times and the style's size (a big area)
+      ? {times: data.times, error: data.error, styleMB: data.style && Math.round(data.style.length / 1e6), pageMs}
+      : {...data, parquet: data.parquet ? Array.from(data.parquet) : null, pageMs};
   };
   const [db, look] = await Promise.all([
     fetch("map.duckdb").then((r) => r.arrayBuffer()),

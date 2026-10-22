@@ -76,9 +76,10 @@ pub fn roads_source(fs: &[Feature]) -> Value {
         let mut props = f.props.clone();
         props.insert("__rs_cls".into(), f.props.get(HIGHWAY).cloned().unwrap_or(Value::Null));
         let geometry = f.coords.as_ref().map_or(Value::Null, |c| json!({"type": "LineString", "coordinates": c}));
-        json!({"id": i, "type": "Feature", "properties": props, "geometry": geometry})
+        crate::obj([("id", i.into()), ("type", "Feature".into()), ("properties", Value::Object(props)), ("geometry", geometry)])
     }).collect();
-    json!({"type": "geojson", "data": {"type": "FeatureCollection", "features": features}, "tolerance": 0.05})
+    crate::obj([("type", "geojson".into()), ("data", crate::obj([("type", "FeatureCollection".into()), ("features", Value::Array(features))])),
+                ("tolerance", 0.05.into())])
 }
 
 // --- helpers: Python's values ---

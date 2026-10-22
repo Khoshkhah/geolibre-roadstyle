@@ -29,7 +29,7 @@ _spec.loader.exec_module(_s4)
 PKG, build = _s4.PKG, _s4.build
 
 
-def run(db):
+def run(db, times_only=False):
     with tempfile.TemporaryDirectory() as tmp:
         for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (HERE / "roads_sql.js", "roads_sql.js"), (HERE / "features_sql.js", "features_sql.js"), (HERE / "planner_sql.js", "planner_sql.js"),
                           (PKG, "pkg"), (DATA / "look.json", "look.json"), (Path(db).resolve(), "map.duckdb")):
@@ -44,7 +44,7 @@ def run(db):
             b = p.chromium.launch()
             pg = b.new_page()
             pg.on("console", lambda m: print("console:", m.text[:200]) if m.type == "error" else None)
-            pg.goto(f"http://127.0.0.1:{srv.server_port}/index.html")
+            pg.goto(f"http://127.0.0.1:{srv.server_port}/index.html" + ("?times" if times_only else ""))
             pg.wait_for_function("() => window.__result", timeout=600000, polling=500)
             r = pg.evaluate("() => window.__result")
             b.close()
@@ -75,15 +75,19 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("db")
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--times-only", action="store_true", help="only the times and the sizes (a big area: no checks)")
     a = ap.parse_args(argv)
     if not a.no_build:
         build()
-    r = run(a.db)
-    if "error" in r:
+    r = run(a.db, a.times_only)
+    if r.get("error"):
         print("ERROR:", r["error"], r.get("times"))
         return 1
     t = r["times"]
     print("times (ms): " + ", ".join(f"{k} {v}" for k, v in t.items()) + f"; the page had the style after {r['pageMs']} ms")
+    if a.times_only:
+        print(f"the style: {r['styleMB']} MB")
+        return 0
     made_pq, made = DATA / "worker_roads.parquet", DATA / "made_worker.json"
     made_pq.write_bytes(bytes(r["parquet"]))
     made.write_text(r["style"])

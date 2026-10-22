@@ -311,7 +311,8 @@ pub fn simple_source(roads: &[Feature], head_m: f64, shadows: bool) -> Result<Va
         let cls = roads.get(e as usize).and_then(|r| r.props.get("highway")).cloned().unwrap_or(Value::Null);
         f.props.insert("__rs_cls".into(), cls);
         let geometry = f.coords.map_or(Value::Null, |c| json!({"type": "LineString", "coordinates": c}));
-        features.push(json!({"type": "Feature", "geometry": geometry, "properties": f.props, "id": id}));
+        features.push(crate::obj([("type", "Feature".into()), ("geometry", geometry), ("properties", Value::Object(f.props)), ("id", id.into())]));
     }
-    Ok(json!({"type": "geojson", "data": {"type": "FeatureCollection", "features": features}, "tolerance": 0.05}))
+    Ok(crate::obj([("type", "geojson".into()), ("data", crate::obj([("type", "FeatureCollection".into()), ("features", Value::Array(features))])),
+                   ("tolerance", 0.05.into())]))
 }
