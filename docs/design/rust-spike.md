@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: S0, S1 (smaller form), S2 and S3 are done, and the browser profile (2026-10-22). S4 (the wasm module in the browser) is next.
+Status: S0 to S4 are done (2026-10-22). S5 (the written go / no-go) is the section "Result of S4" and the decision after it.
 
 ## Question
 
@@ -233,3 +233,50 @@ Natively, Rust is only about 1.7 times faster. The Rust code is not tuned: every
 | The levels solver | about 1,100 lines | Stays offline (`duckosm levels`): a file without levels opens without the browser solver. |
 
 **Recommendation:** finish S4 (the wasm module in a worker, measured in headless Chromium against the Pyodide numbers). Then decide the full port with real browser numbers. The next unknown after S4 is the names and arrows, because they are the largest stage and depend on shapely.
+
+## Result of S4 (2026-10-22)
+
+**The wasm module runs in a worker in headless Chromium** (`spike/wasm/`: `makeStyle(parquet, look, layers)` through wasm-bindgen 0.2.129; `run_browser.py` builds it, runs it, compares and times it).
+
+| | Rust wasm | Pyodide (the same stages, `spike/profile/`) |
+|---|---|---|
+| Start | 24 to 30 ms to compile and start the module (local server) | 5.4 s (Python and its packages) |
+| Download | 3.66 MB, **0.74 MB with gzip** | Pyodide and numpy, pandas, shapely, geopandas, pyproj, DuckDB: tens of MB |
+| The roads and the simple pieces, first map | **1.24 to 1.30 s** | 4.40 s |
+| The same, warm | 0.92 s | 3.3 s (run 2) |
+| The page has the style (start, the run, `JSON.parse`, the transfer) | 1.5 s | — |
+
+The wasm module is about 3.4 times faster than Pyodide for the same work, and it needs no Python start for it. It is 1.4 times slower than the same Rust natively.
+
+### Equality: the knife edge of the short roads
+
+The layers and the `roads` source are **equal with tolerance 0** to the style that Pyodide makes. The `simple` source is not, and it cannot be, on any two platforms:
+
+- A road shorter than its two heads (for example 3.6 m with two 5 m heads) is cut at `h0` and `n - h1`, which are the same point in exact arithmetic. In floating point the middle piece is one last bit long, zero or negative. Where it survives, it is under 2 cm after rounding, and its cut gets a second seam and lap. A last bit of `cos` or `hypot` decides which. glibc (native Python), Pyodide's math library and Rust's wasm math library give three different answers.
+- **The plugin itself is affected today**: the style from Pyodide differs from the native golden file in 78 of 8,561 edges.
+- `spike/compare_pieces.py` compares per edge. It forgives exactly this case (a main piece under 2 cm, and a seam or lap repeated within 1e-6 deg) and one rounding step (2e-7 deg, about 1 cm), and nothing else. A test checks that it still finds a moved piece and a missing fill.
+
+| Pair | Edges that differ | Knife edge | One rounding step | Other |
+|---|---|---|---|---|
+| Native Python and Pyodide | 78 | 76 | 2 | 0 |
+| **Pyodide and Rust wasm** | 58 | 57 | 1 | **0** |
+| Native Python and Rust wasm | 27 | 26 | 1 | 0 |
+
+**Fix to propose upstream (roadstyle `_casing_parts`):** when `h0 + h1 >= n - 0.05`, cut once at `h0` (two pieces), not at `h0` and `n - h1` (three pieces with an empty middle). This removes the knife edge on every platform. Only rounding steps remain, and a tolerance of 2e-7 deg covers them.
+
+### The pass rule
+
+1. **Equal to the golden file: yes, with the knife edge.** Natively Rust equals Python with tolerance 0. In the browser it equals Pyodide, which is what the plugin draws, except for the knife edge. The knife edge is a property of the Python algorithm, not of the port.
+2. **1 s or less in the browser: not on the first call.** The first call takes 1.3 s and later calls take 0.92 s. The code is not tuned: every piece is a map with about 40 text keys. A struct per road and per piece would very likely bring the first call under 1 s. That is not measured.
+3. **1.5 MB or less with gzip: yes**, 0.74 MB, without `wasm-opt`.
+
+## Decision (2026-10-22)
+
+**The spike says go for the full port, with three conditions.**
+
+- **Why go.** The hardest code in the style ports exactly. The method finds every difference. The module is small (0.74 MB) and 3.4 times faster than Pyodide for the same work. The full port removes the Python start (5.4 s, and the first download of tens of MB), which no hybrid can do.
+- **Condition 1: the knife edge is fixed upstream first.** Fix `_casing_parts` in roadstyle, so that the golden files can be compared on every platform with a small tolerance.
+- **Condition 2: the next step is the names and arrows.** They are the largest stage (5.8 s in Pyodide) and the only one that depends on shapely's spatial index. If they cannot be ported to the same result with `rstar` and our own distance code, the full port stops there.
+- **Condition 3: a decision on the input.** Either duckdb-wasm (JavaScript) reads the `.duckdb` file in the worker and hands Arrow tables to Rust, or `duckosm` writes the tables as Parquet. The levels solver stays offline (`duckosm levels`) in both cases.
+
+Not decided by the spike: who keeps the Rust copy equal to roadstyle after each release. The golden test finds a difference, but someone must port the change.

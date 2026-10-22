@@ -18,7 +18,8 @@ HERE = Path(__file__).resolve().parent
 PKGS = HERE.parent.parent / "py" / "pkgs.zip"
 
 
-def main(db):
+def main(db, golden=None):
+    """The profile; with ``golden`` (a path): the spike's golden style made in Pyodide instead, written there."""
     with tempfile.TemporaryDirectory() as tmp:
         for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (HERE / "rs_profile.py", "rs_profile.py"),
                           (PKGS, "pkgs.zip"), (Path(db).resolve(), "monaco.duckdb")):
@@ -33,11 +34,15 @@ def main(db):
             b = p.chromium.launch()
             pg = b.new_page()
             pg.on("console", lambda m: print("console:", m.text[:160]) if m.type == "error" else None)
-            pg.goto(f"http://127.0.0.1:{srv.server_port}/index.html")
+            pg.goto(f"http://127.0.0.1:{srv.server_port}/index.html" + ("?golden" if golden else ""))
             pg.wait_for_function("() => window.__result", timeout=900000, polling=1000)
             r = pg.evaluate("() => window.__result")
             b.close()
         srv.shutdown()
+    if golden and "golden" in r:
+        Path(golden).write_text(r["golden"])
+        print(f"wrote {golden} ({len(r['golden']) / 1e6:.1f} MB): export_inline made in Pyodide")
+        return 0
     (HERE / "browser_result.json").write_text(json.dumps(r, indent=1))
     if "error" in r:
         print("ERROR:", r["error"])
@@ -52,4 +57,4 @@ def main(db):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    sys.exit(main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None))

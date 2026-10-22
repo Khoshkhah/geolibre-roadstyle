@@ -15,6 +15,12 @@ onmessage = async ({data}) => {
     py.FS.writeFile("/home/pyodide/rs_profile.py", data.profile);
     await py.runPythonAsync(`import sys\nsys.path.insert(0, "/home/pyodide/pkgs")\nsys.path.insert(0, "/home/pyodide")\nimport rs_profile`);
     const t3 = performance.now();
+    if (data.golden) {                  // the spike's golden style made in Pyodide (what the plugin draws), not the profile
+      const text = await py.runPythonAsync(`import json\nfrom mapstyle.export import export_inline
+json.dumps(export_inline("/home/pyodide/db.duckdb", layers=False, arrows=False, labels=False, view_3d=False), separators=(",", ":"))`);
+      postMessage({golden: text});
+      return;
+    }
     const runs = [];
     for (let i = 0; i < 2; i++) {       // twice: the second run has every module imported and warm
       const out = await py.runPythonAsync(`import json\njson.dumps(rs_profile.profile("/home/pyodide/db.duckdb", planner=True))`);

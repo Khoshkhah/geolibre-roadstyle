@@ -480,6 +480,7 @@ dependencies = [
  "bytes",
  "parquet",
  "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

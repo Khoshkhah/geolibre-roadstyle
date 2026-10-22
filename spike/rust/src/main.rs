@@ -1,13 +1,8 @@
-//! Spike (docs/design/rust-spike.md): the road part of the style, from the roads in a GeoParquet file.
+//! Spike (docs/design/rust-spike.md): the road part of the style, natively, with the time of each step.
 //!
 //!     cargo run --release -- spike/data/look.json spike/data/layers.json spike/data/roads.parquet made.json
-//!
-//! S1: the layers come from Python (`layers.json`): they depend on the look and on flags of the data. S2: the "roads" source.
 
-mod read;
-mod roads;
-mod simple;
-
+use roadstyle_spike::{read, roads, simple};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};

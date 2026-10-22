@@ -10,6 +10,6 @@
     fetch("monaco.duckdb").then((r) => r.arrayBuffer()),
     fetch("rs_profile.py").then((r) => r.text()),
   ]);
-  w.postMessage({pkgs, db, profile}, [pkgs, db]);
+  w.postMessage({pkgs, db, profile, golden: new URLSearchParams(location.search).has("golden")}, [pkgs, db]);
 </script>
 <p>profiling…</p>

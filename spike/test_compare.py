@@ -42,6 +42,24 @@ def test_rust_style_equals_golden(tmp_path):
     assert r.stdout.strip() == "equal", r.stdout
 
 
+def test_compare_pieces_finds_a_real_change(tmp_path):
+    """compare_pieces.py forgives the short-road knife edge and one rounding step, and nothing else."""
+    g = Path(__file__).parent / "data" / "golden.json"
+    if not g.exists():
+        return
+    run = lambda b: subprocess.run([sys.executable, str(Path(__file__).parent / "compare_pieces.py"), str(g), str(b)], capture_output=True, text=True)   # noqa: E731
+    assert run(g).returncode == 0
+    s = json.loads(g.read_text())
+    fs = s["sources"]["simple"]["data"]["features"]
+    piece = next(f for f in fs if f["properties"]["__rs_k"] == 0 and not f["properties"].get("__rs_seam"))
+    piece["geometry"]["coordinates"][0][0] += 1e-5                  # 80 cm: not a rounding step
+    del fs[next(i for i, f in enumerate(fs) if f["properties"]["__rs_k"] == 1)]     # a fill missing
+    (tmp_path / "x.json").write_text(json.dumps(s))
+    r = run(tmp_path / "x.json")
+    # both changes are in edge 0 (its first casing piece and its fill): one edge, with the missing piece and the moved point
+    assert r.returncode == 1 and "1 otherwise" in r.stdout and ".length: 10 != 9" in r.stdout, r.stdout
+
+
 def test_golden_file_against_itself_and_a_changed_one(tmp_path):
     g = Path(__file__).parent / "data" / "golden.json"
     if not g.exists():
