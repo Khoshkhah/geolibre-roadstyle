@@ -424,7 +424,7 @@ export function mount(map, RM, H) {
     const modes = ticked(), multi = modes.length > 1;
     $("rm-weight").classList.toggle("off", multi);
     $("rm-note").textContent = multi ? "Walk + drive: the car can be taken at any junction (60 s per change). " +
-      "Turn restrictions don't apply across modes (as route_multimodal_points)." : NO_MM;
+      "The route goes from junction to junction, so no leg obeys turn restrictions." : NO_MM;
     if (!markers.A || !markers.B) return;
     const ok = inMode(multi ? "walking" : modes[0]), at = (m) => [m.getLngLat().lng, m.getLngLat().lat];
     const S = cands(at(markers.A), ok), T = cands(at(markers.B), ok);
