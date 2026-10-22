@@ -1,7 +1,24 @@
-# roadstyle for GeoLibre
+<p align="center">
+  <img src="docs/img/roadstyle.svg" alt="roadstyle" height="64">
+  &nbsp;&nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/duckosm-inverse.svg">
+    <img src="docs/img/duckosm.svg" alt="duckOSM" height="64">
+  </picture>
+</p>
 
-A [GeoLibre](https://web.geolibre.app) plugin. It draws roads in [roadstyle](https://github.com/Khoshkhah/roadstyle)'s look (casings, bridges,
-tunnels, one-way arrows), with 3D buildings and base-map layers, over GeoLibre's own map.
+<h1 align="center">roadstyle for GeoLibre</h1>
+
+<p align="center">
+  Roads in <a href="https://github.com/Khoshkhah/roadstyle">roadstyle</a>'s look, from a <a href="https://github.com/Khoshkhah/duckOSM">duckOSM</a> database, in <a href="https://web.geolibre.app">GeoLibre</a>.<br>
+  <a href="https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Khoshkhah/geolibre-roadstyle"></a>
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
+
+<p align="center"><img src="docs/img/monaco-3d.jpg" alt="Monaco in GeoLibre: roadstyle's roads, 3D buildings and base-map layers" width="860"></p>
+
+The plugin draws roads with casings, bridges, tunnels and one-way arrows, with 3D buildings and base-map layers, over GeoLibre's own map. The map
+is made in the browser from a duckOSM database or a style file. No server is needed.
 
 > ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.18.1)
 >
