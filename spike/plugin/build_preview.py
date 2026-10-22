@@ -28,7 +28,7 @@ ID, NAME, MENU, VERSION = "roadstyle-rust", "roadstyle (Rust preview)", "roadsty
 OUT = ROOT / "dist" / "roadstyle-rust-preview.zip"
 PATCHES = [         # (the text in index.js, the preview's): each must occur exactly once
     ('const ID = "roadstyle";', f'const ID = "{ID}";'),
-    ('const VERSION = "0.20.0";', f'const VERSION = "{VERSION}";'),
+    ('const VERSION = "0.20.1";', f'const VERSION = "{VERSION}";'),
     ('  name: "roadstyle",', f'  name: "{NAME}",'),
     ('urlParameterNames: ["roadstyle"]', f'urlParameterNames: ["{ID}"]'),
     ('params.getAll("roadstyle")', f'params.getAll("{ID}")'),
