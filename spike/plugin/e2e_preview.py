@@ -21,9 +21,9 @@ from e2e_geolibre import activate, probe_zip  # noqa: E402
 ZIP = ROOT / "dist" / "roadstyle-rust-preview.zip"
 
 
-def open_db(pg, db):
-    """The preview's menu > Open a duckOSM database, the default choices; returns the seconds from the click on Open to the map (MapLibre idle)."""
-    pg.get_by_role("button", name="roadstyle (Rust)").first.click()
+def open_db(pg, db, menu="roadstyle (Rust)"):
+    """The plugin's menu > Open a duckOSM database, the default choices; returns the seconds from the click on Open to the map (MapLibre idle)."""
+    pg.get_by_role("button", name=menu).first.click()
     pg.get_by_text("Open a duckOSM database", exact=False).first.click()
     pg.wait_for_selector("[role=dialog] input[type=file]")
     pg.set_input_files("[role=dialog] input[type=file]", str(db))

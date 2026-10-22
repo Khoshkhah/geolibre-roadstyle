@@ -62,7 +62,11 @@ async function handle(data) {
       const features = (await writeFeatures(q, "m", JSON.parse(look).features.layers_yaml.layers)) ? await db.copyFileToBuffer("features.parquet") : undefined;
       const planner = o.planner && (await writePlanner(q, "m")) ? await db.copyFileToBuffer("planner.parquet") : undefined;
       postMessage({step: "making the map (Rust)"});
-      postMessage({style: makeStyle(roads, look, features, planner, data.name)});
+      const t = performance.now(), style = makeStyle(roads, look, features, planner, data.name);
+      const s = ((performance.now() - t) / 1000).toFixed(1);       // shown in the box, so a slow browser can be told from a slow page
+      console.info(`roadstyle (Rust): the style in ${s} s, ${(style.length / 1e6).toFixed(1)} MB`);
+      postMessage({step: `sending the map (Rust took ${s} s)`});
+      postMessage({style});
     } finally {                             // also after an error: the database is not kept in the worker's memory
       await conn.query("USE memory").catch(() => {});
       await conn.query("DETACH m").catch(() => {});
