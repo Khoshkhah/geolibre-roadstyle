@@ -69,8 +69,9 @@ impl Model {
             zstops: r["zoom_stops"].as_array().ok_or("look.json: no roads_model.zoom_stops")?.clone(),
             z_order: obj(&r["z_order"], "roads_model.z_order")?.clone(),
             link_w: num(&th["links"]["width"], "theme roads.links.width")?,
-            offset_frac: num(&split["offset_frac"], "split.offset_frac")?,
-            width_frac: num(&split["width_frac"], "split.width_frac")?,
+            // render(offset_frac=, width_frac=) over the theme's split: mapstyle passes 0 and 1 for a mode without lanes (one centred line per road)
+            offset_frac: look["args"]["offset_frac"].as_f64().map_or_else(|| num(&split["offset_frac"], "split.offset_frac"), Ok)?,
+            width_frac: look["args"]["width_frac"].as_f64().map_or_else(|| num(&split["width_frac"], "split.width_frac"), Ok)?,
             offset_zoom: num(&split["offset_zoom"], "split.offset_zoom")?,
             ramp_zooms: num(&split["ramp_zooms"], "split.ramp_zooms")?,
             fb_group: fb["group"].as_str().ok_or("look.json: no fallback group")?.to_string(),

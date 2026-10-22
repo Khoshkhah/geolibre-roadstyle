@@ -4,8 +4,9 @@
 
 It is the plugin's own index.js with its own id ("roadstyle-rust", menu "roadstyle (Rust)", its own style cache), so it can be installed next to
 the roadstyle plugin (activate one of the two at a time). Behind the names index.js already uses: py/worker.js is the Rust worker
-(spike/plugin/worker.js, bundled with esbuild), py/pkgs.zip the look (spike/data/look.json: the dialog's default choices) and the wasm module.
-Needs cargo (wasm32), wasm-bindgen, npx (esbuild) and the fixture's look.json."""
+(spike/plugin/worker.js, bundled with esbuild), py/pkgs.zip the looks of the dialog's 64 choices (spike/data/looks.json) and the wasm module.
+The preview keeps each map in the browser's storage (a patch of index.js: its Python worker keeps only the map with the names and arrows).
+Needs cargo (wasm32), wasm-bindgen, npx (esbuild) and the fixture's looks.json (tools/make_spike_fixture.py --choices)."""
 import base64
 import importlib.util
 import json
@@ -24,7 +25,7 @@ _spec = importlib.util.spec_from_file_location("s4_wasm", HERE.parent / "wasm" /
 _s4 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_s4)
 
-ID, NAME, MENU, VERSION = "roadstyle-rust", "roadstyle (Rust preview)", "roadstyle (Rust)", "0.20.0-rust.4"
+ID, NAME, MENU, VERSION = "roadstyle-rust", "roadstyle (Rust preview)", "roadstyle (Rust)", "0.21.0-rust.5"
 OUT = ROOT / "dist" / "roadstyle-rust-preview.zip"
 PATCHES = [         # (the text in index.js, the preview's): each must occur exactly once
     ('const ID = "roadstyle";', f'const ID = "{ID}";'),
@@ -35,6 +36,7 @@ PATCHES = [         # (the text in index.js, the preview's): each must occur exa
     ('id: "roadstyle-menu", label: "roadstyle"', f'id: "{ID}-menu", label: "{MENU}"'),
     ('indexedDB.open("roadstyle-cache", 1)', f'indexedDB.open("{ID}-cache", 1)'),
     ('box.say("loading Python, roadstyle and mapstyle (the first time about 30 s)")', 'box.say("starting DuckDB and the Rust module")'),
+    ('        else done({style: data.style, extra});', '        else { IDB.put(key, data.style).catch(() => false); done({style: data.style, extra}); }'),
 ]
 
 
@@ -47,9 +49,9 @@ def bundle_worker():
 
 
 def pkgs():
-    look = (ROOT / "spike" / "data" / "look.json").read_bytes()
+    looks = (ROOT / "spike" / "data" / "looks.json").read_bytes()
     wasm = (_s4.PKG / "roadstyle_spike_bg.wasm").read_bytes()
-    return struct.pack("<I", len(look)) + look + wasm
+    return struct.pack("<I", len(looks)) + looks + wasm
 
 
 def main():
@@ -66,7 +68,7 @@ def main():
     manifest = json.loads((ROOT / "plugin.json").read_text())
     manifest.update(id=ID, name=NAME, version=VERSION,
                     description="Preview: the roadstyle plugin with the map made in Rust (WebAssembly) and DuckDB in the browser, not Python. "
-                                "The dialog's default choices only; no 3D bridge decks.")
+                                "No 3D bridge decks.")
     OUT.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("plugin.json", json.dumps(manifest, indent=2))

@@ -21,12 +21,15 @@ from e2e_geolibre import activate, probe_zip  # noqa: E402
 ZIP = ROOT / "dist" / "roadstyle-rust-preview.zip"
 
 
-def open_db(pg, db, menu="roadstyle (Rust)"):
-    """The plugin's menu > Open a duckOSM database, the default choices; returns the seconds from the click on Open to the map (MapLibre idle)."""
+def open_db(pg, db, menu="roadstyle (Rust)", choose=None):
+    """The plugin's menu > Open a duckOSM database, with the dialog's choices (mode, theme, paths: None keeps the dialog's); returns the seconds
+    from the click on Open to the map (MapLibre idle) and the steps of the progress box."""
     pg.get_by_role("button", name=menu).first.click()
     pg.get_by_text("Open a duckOSM database", exact=False).first.click()
     pg.wait_for_selector("[role=dialog] input[type=file]")
     pg.set_input_files("[role=dialog] input[type=file]", str(db))
+    for i, v in enumerate(choose or ()):
+        pg.select_option(f"[role=dialog] select >> nth={i}", v)
     t0 = time.time()
     pg.click("[role=dialog] button[type=submit]")
     pg.wait_for_selector(".rs-pl-progress", timeout=20000)
@@ -42,7 +45,7 @@ def open_db(pg, db, menu="roadstyle (Rust)"):
     for t, s in steps:
         print(f"  {t:6.1f} s  {s}")
     print(f"  {t_box:6.1f} s  the progress box is gone; {time.time() - t0:.1f} s  the map is idle")
-    return time.time() - t0
+    return time.time() - t0, [s for _, s in steps]
 
 
 def main(db, out=None):
@@ -68,7 +71,7 @@ def main(db, out=None):
         assert pg.evaluate("() => !!(window.__rs && window.__rs.map)"), "the probe has no map"
 
         print("first map (DuckDB and the Rust module start):")
-        t1 = open_db(pg, db)
+        t1, _ = open_db(pg, db)
         pg.wait_for_timeout(3000)
         info = pg.evaluate("""() => { const m = window.__rs.map, ls = m.getStyle().layers.filter((l) => /^rs\\d+-/.test(l.id));
             return {layers: ls.length, arrows: ls.some((l) => /roads-arrows$/.test(l.id)), labels: ls.some((l) => /roads-labels$/.test(l.id)),
@@ -92,12 +95,21 @@ def main(db, out=None):
         assert info["simple"] and info["arrows"] and info["labels"] and info["base"] > 0, info
         assert pl["dom"] and pl["pins"] == 2 and pl["route"] and drawn > 0, (pl, drawn)
 
-        print("second map (the same file; DuckDB and the Rust module are warm; the preview keeps no style in the browser's storage):")
-        pg.get_by_role("button", name="roadstyle (Rust)").first.click()
-        pg.get_by_text("Remove roadstyle layers", exact=False).first.click()
-        pg.wait_for_timeout(2000)
-        t2 = open_db(pg, db)
-        print(f"times: first map {t1:.1f} s, second map {t2:.1f} s")
+        def again(choose, label):
+            print(label)
+            pg.get_by_role("button", name="roadstyle (Rust)").first.click()
+            pg.get_by_text("Remove roadstyle layers", exact=False).first.click()
+            pg.wait_for_timeout(2000)
+            t, steps = open_db(pg, db, choose=choose)
+            pg.wait_for_timeout(1500)
+            n = pg.evaluate("() => window.__rs.map.getStyle().layers.filter((l) => /^rs\\d+-/.test(l.id)).length")
+            assert n > 50 and not errors, (n, errors)
+            return t, steps
+        t2, steps = again(("all", "osm", "google"), "second map (the same file and choices: from the browser's storage):")
+        assert not any("making the map" in s for s in steps), steps        # the box's "the map from the browser's storage" is too short to see
+        t3, steps = again(("walking", "grey", "komoot"), "third map (walking, grey, Komoot; DuckDB and the Rust module are warm):")
+        assert any("making the map (Rust)" in s for s in steps), steps
+        print(f"times: first map {t1:.1f} s, the same again {t2:.1f} s, other choices {t3:.1f} s")
         browser.close()
 
 

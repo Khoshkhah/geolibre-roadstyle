@@ -56,6 +56,27 @@ def test_rust_style_equals_golden(tmp_path):
     assert r.stdout.strip() == "equal", r.stdout
 
 
+def test_rust_style_equals_golden_for_16_choices(tmp_path):
+    """The dialog's choices: for 16 choices of mode, theme and paths (each pair of values once), the look put together from looks.json (as the
+    worker does) and the roads of the mode give Python's whole style, with tolerance 0 (needs the fixture's --choices and cargo)."""
+    import gzip
+    here, data = Path(__file__).parent, Path(__file__).parent / "data"
+    if not (data / "looks.json").exists() or shutil.which("cargo") is None:
+        return
+    exe = here / "rust" / "target" / "release" / "roadstyle-spike"
+    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
+    pack, bad = json.loads((data / "looks.json").read_text()), {}
+    for g in sorted((data / "choices").glob("*.json.gz")):
+        m, t, p = g.name[:-len(".json.gz")].split("_")
+        look, out = tmp_path / "look.json", tmp_path / "made.json"
+        look.write_text(json.dumps({k: pack["parts"][k][i] for k, i in pack["choices"][f"{m}|{t}|{p}"].items()}))
+        subprocess.run([str(exe), str(look), str(data / "choices" / f"roads_{m}.parquet"), str(data / "features.parquet"), "-", str(out)], check=True)
+        d = diff(json.loads(gzip.open(g).read()), json.loads(out.read_text()), tol=0)
+        if d:
+            bad[g.name] = d[:3]
+    assert not bad, bad
+
+
 def test_rust_layers_equal_golden_for_every_subset():
     """Full port step 2: the road layers the Rust crate makes for each of the 12 subsets (spike/data/layers, tools/make_layer_goldens.py: tunnels,
     twin pairs, reverse pairs, dash values, no one-way slot, no name) equal their golden layers with tolerance 0."""

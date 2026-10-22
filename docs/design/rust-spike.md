@@ -797,3 +797,28 @@ the freed block for the next allocations (tested: the memory stays at the reserv
 
 **For later.** 738 MB for a 46 MB style is much. The style is built as `serde_json::Value` trees and copied when it is put together. Typed structs
 and fewer copies would use less memory and time in every browser.
+
+## Towards the release: the dialog's choices and the kept maps (2026-10-22)
+
+Kaveh agreed to the plan: (1) the dialog's choices and the kept maps in the preview, (2) a bigger area and the memory, (3) then the Rust version
+replaces the Python one as roadstyle 0.21.0, with the same plugin id, (4) then the registration in GeoLibre.
+
+**Step 1 is done.**
+
+- **The looks.** `tools/make_spike_fixture.py --choices` makes the look of each of the 64 choices (4 modes × 4 themes × 4 path styles) with
+  `look_of(db, mode, theme, paths)`, and writes them as `looks.json`: each part once, and per choice an index into each part (1.4 MB; the
+  `config` part has 9 values, `styles` 28, `features` 3). The worker puts a choice's look together from it. A choice that is not in the pack
+  gives an error.
+- **The mode in the SQL.** `writeRoads(q, catalog, mode)`: in one mode, `access` is that mode's restriction where the mode cannot use the road
+  (`_access`). For all four modes the browser's roads are equal to Python's (`spike/worker/run_browser.py`). In duckdb-wasm, a second `COPY` to
+  a file name that is kept is not seen by `copyFileToBuffer`: drop the file first.
+- **The mode without lanes.** For walking and cycling, mapstyle passes `offset_frac=0, width_frac=1` (one centred line per road). The Rust
+  `Model` now takes them from the look's `args`, over the theme's split.
+- **The test.** 16 choices in which each pair of values occurs once (an orthogonal array OA(16, 3, 4, 2)): the golden files
+  (`spike/data/choices/*.json.gz`, 48 MB) against the Rust style made from the look pack and the roads of the mode. All 16 are equal with
+  tolerance 0 (`test_rust_style_equals_golden_for_16_choices`).
+- **The kept maps.** The preview keeps each style in the browser's storage (IndexedDB), with a patch of `index.js` in `build_preview.py`. The
+  real plugin keeps only the style with the names and arrows, because its Python worker sends a first style without them.
+
+**In GeoLibre** (preview `0.21.0-rust.5`, Monaco, `spike/plugin/e2e_preview.py`): the first map 6.7 s; the same file and choices again 2.7 s (from
+the browser's storage); walking, grey and Komoot 4.6 s.

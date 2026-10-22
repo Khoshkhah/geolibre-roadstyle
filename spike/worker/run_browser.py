@@ -90,6 +90,13 @@ def main(argv=None):
     ok, msg = same_rows(made_pq, DATA / "roads.parquet")
     print("1. the roads table from SQL against roads.parquet (Python):", msg)
     rc = 0 if ok else 1
+    for mode, pq in r.get("byMode", {}).items():                 # the dialog's modes: the access column (fixture --choices)
+        ref = DATA / "choices" / f"roads_{mode}.parquet"
+        if ref.exists():
+            (DATA / "worker_roads_mode.parquet").write_bytes(bytes(pq))
+            ok, msg = same_rows(DATA / "worker_roads_mode.parquet", ref)
+            print(f"1. the roads of mode {mode} from SQL against {ref.name}:", msg)
+            rc = rc or (0 if ok else 1)
     ov = ",".join(f"sources.ov{i}" for i in range(sum(1 for k in json.loads((DATA / "golden_full.json").read_text())["sources"] if k.startswith("ov"))))
     for what, ref, only, tol in (("layers (roads and base map)", "golden_full.json", "layers", "0"), ("roads", "golden.json", "sources.roads", "0"),
                                  ("base-map sources", "golden_full.json", ov, "1e-12"), ("images", "golden_full.json", "metadata.roadstyle:images", "0"),

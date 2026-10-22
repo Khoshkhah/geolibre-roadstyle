@@ -34,6 +34,13 @@ onmessage = async ({data}) => {
       await conn.query("ATTACH 'map.duckdb' AS m (READ_ONLY)");
       await conn.query("USE m");
     })());
+    const byMode = {};                                // the roads of each mode (the access column), for the check against Python's
+    for (const mode of ["all", "walking", "driving", "cycling"]) {
+      await db.dropFile("roads.parquet").catch(() => {});   // duckdb-wasm: a second COPY to a kept file name is not seen by copyFileToBuffer
+      await timed(times, "roadsSql_" + mode, writeRoads(q, "m", mode));
+      byMode[mode] = Array.from(await db.copyFileToBuffer("roads.parquet"));
+    }
+    await db.dropFile("roads.parquet");
     await timed(times, "roadsSql", writeRoads(q, "m"));
     const parquet = await timed(times, "copy", db.copyFileToBuffer("roads.parquet"));
     const specs = JSON.parse(data.look).features.layers_yaml.layers;
@@ -47,7 +54,7 @@ onmessage = async ({data}) => {
     times.total = Math.round(performance.now() - t0);
     await conn.close();
     await db.terminate();
-    postMessage({style, parquet, times}, [parquet.buffer]);
+    postMessage({style, parquet, byMode, times}, [parquet.buffer]);
   } catch (e) {
     postMessage({error: String(e && (e.message || e)).slice(0, 2000), times});
   }

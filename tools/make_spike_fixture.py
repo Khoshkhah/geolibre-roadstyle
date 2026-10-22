@@ -7,6 +7,10 @@ Writes to the output folder:
     look.json       the resolved look: palette, settings, the render arguments, the theme and the config in force
     golden.json     mapstyle's export_inline for the same arguments (the answer the Rust code must give)
     versions.txt    the versions and the places of roadstyle and mapstyle, and the arguments
+    --choices: the dialog's choices (mode, theme, paths) as well:
+    looks.json      the look of each of the 64 choices, each part once: {"parts": {key: [values]}, "choices": {"mode|theme|paths": {key: index}}}
+    choices/roads_<mode>.parquet   the roads of each mode (the column access depends on the mode)
+    choices/<mode>_<theme>_<paths>.json.gz   export_inline with the base map and the names and arrows, for the 16 choices of CHOICES16
 
 Needs mapstyle and roadstyle (the venv of the mapstyle project has them).
 """
@@ -20,6 +24,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 # the spike scope: no arrows, no street names, no 3D decks, no base-map layers
 ARGS = dict(layers=False, arrows=False, labels=False, view_3d=False)
+
+
+# 16 choices in which each pair of values (mode and theme, mode and paths, theme and paths) occurs once: an orthogonal array OA(16, 3, 4, 2)
+MODES, THEMES, PATHS = ("all", "driving", "walking", "cycling"), ("osm", "google", "grey", "roadstyle"), ("google", "osm", "komoot", "cyclosm")
+CHOICES16 = [(MODES[i], THEMES[j], PATHS[(i + j) % 4]) for i in range(4) for j in range(4)]
 
 
 def _json(o):
@@ -166,22 +175,13 @@ def planner_parquet(db, path):
     con.execute(f"COPY ({' UNION ALL BY NAME '.join(parts)} ORDER BY part, grp, ord) TO '{Path(path).resolve()}' (FORMAT parquet)")
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("db", nargs="?", default=str(HERE.parent / "duckOSM" / "monaco.duckdb"))
-    ap.add_argument("--out", default=str(HERE / "spike" / "data"))
-    a = ap.parse_args(argv)
-    out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
-
-    import mapstyle
-    import mapstyle.map as mm
+def look_of(db, mode="all", theme="osm", paths="google"):
+    """The resolved look of one choice of the plugin's dialog (render_map's mode, theme and paths), and the roads as roadstyle gets them."""
     import roadstyle as rs
-    mm._spatial = _pyodide_spatial                     # as in the plugin's Pyodide
+    from mapstyle.map import render_map
+    from mapstyle.style import load_style
     from roadstyle import _settings
     from roadstyle import render_web as rw
-    from mapstyle.export import export_inline
-    from mapstyle.map import render_map
 
     got = {}
 
@@ -189,15 +189,12 @@ def main(argv=None):
         got.update(roads=roads, palette=palette, settings=settings, kw=kw)
         return None
 
-    render_map(a.db, None, _export=grab, **ARGS)
-    roads, settings, kw = got["roads"], got["settings"], got["kw"]
-
-    roads.to_parquet(out / "roads.parquet")            # GeoParquet: geometry as WKB
-
+    render_map(db, mode, _export=grab, theme=theme, paths=paths, **ARGS)
+    settings, kw = got["settings"], got["kw"]
     prev = list(_settings._EXTRA)                      # the look as render_edges applies it: the settings over the ones in force
     rs.use_settings(*prev, settings)
     try:
-        theme, config = _settings.theme(), dataclasses.asdict(rw.CONFIG)
+        theme_rs, config = _settings.theme(), dataclasses.asdict(rw.CONFIG)
         styles = _class_styles(got["palette"], rw.CONFIG)
         head_m = inspect.signature(rw.render).parameters["head_m"].default
         # S6: a slot's rank (the z_order table) and how far a name keeps from a crossing road (its drawn width at zoom 20, _crossing_half_m)
@@ -206,19 +203,66 @@ def main(argv=None):
         roads_model = _settings.roads()        # step 2 of the full port: the road tables the layer builders read (render_web._load_road_model)
         # the page metadata of the export: roadstyle:interaction's road popup fields and hover delay (render's defaults)
         interaction = {"popup": list(rw.DEFAULT_ROAD_POPUP), "hover_delay_ms": inspect.signature(rw.render).parameters["hover_delay_ms"].default}
+        oneway = _oneway_image()
     finally:
         rs.use_settings(*prev)
-    from mapstyle.style import load_style
     look = {"palette": got["palette"], "settings": settings,
             "args": {k: v for k, v in kw.items() if k != "overlays"},      # name, tooltip, level columns, ... (the overlays are the base map)
-            "theme": theme, "config": config,
+            "theme": theme_rs, "config": config,
             # what the Rust code reads (S2): the class styles as the styler resolves them, and the render's defaults
             "styles": styles, "head_m": head_m, "slots": slots_look, "roads_model": roads_model,
             # step 3 of the full port: the base-map layers (mapstyle's styles/layers.yaml and the 3D heights of load_layers), the look of
             # feature_overlays (the theme's "features" style) and its images, and the arrow image of roadstyle's export
             "features": {"layers_yaml": load_style("layers"), "buildings_3d": load_style()["features"]["buildings_3d"],
-                         "style": _theme_features(), "images": _feature_images()},
-            "oneway_image": _oneway_image(), "interaction": interaction}
+                         "style": _theme_features(theme), "images": _feature_images(theme)},
+            "oneway_image": oneway, "interaction": interaction}
+    return json.loads(json.dumps(look, default=_json)), got["roads"]
+
+
+def write_choices(db, out):
+    """--choices: looks.json (the 64 looks, each part once), the roads of each mode, and the golden files of CHOICES16."""
+    import gzip
+    from mapstyle.export import export_inline
+    parts, choices = {}, {}
+    (out / "choices").mkdir(exist_ok=True)
+    for m in MODES:
+        for t in THEMES:
+            for p in PATHS:
+                look, roads = look_of(db, m, t, p)
+                idx = {}
+                for k, v in look.items():
+                    vals = parts.setdefault(k, [])
+                    if v not in vals:
+                        vals.append(v)
+                    idx[k] = vals.index(v)
+                choices[f"{m}|{t}|{p}"] = idx
+        roads.to_parquet(out / "choices" / f"roads_{m}.parquet")
+    (out / "looks.json").write_text(json.dumps({"parts": parts, "choices": choices}, separators=(",", ":")))
+    print("looks.json:", {k: len(v) for k, v in parts.items()}, f"{(out / 'looks.json').stat().st_size / 1e6:.2f} MB")
+    for m, t, p in CHOICES16:
+        g = export_inline(db, mode=m, theme=t, paths=p, **{**ARGS, "layers": True, "arrows": True, "labels": True})
+        with gzip.open(out / "choices" / f"{m}_{t}_{p}.json.gz", "wt") as f:
+            json.dump(g, f, separators=(",", ":"), default=_json)
+        print("golden", m, t, p)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("db", nargs="?", default=str(HERE.parent / "duckOSM" / "monaco.duckdb"))
+    ap.add_argument("--out", default=str(HERE / "spike" / "data"))
+    ap.add_argument("--choices", action="store_true", help="also the dialog's choices: looks.json, the roads of each mode, 16 golden files")
+    a = ap.parse_args(argv)
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    import mapstyle
+    import mapstyle.map as mm
+    import roadstyle as rs
+    mm._spatial = _pyodide_spatial                     # as in the plugin's Pyodide
+    from mapstyle.export import export_inline
+
+    look, roads = look_of(a.db)
+    roads.to_parquet(out / "roads.parquet")            # GeoParquet: geometry as WKB
     (out / "look.json").write_text(json.dumps(look, default=_json, indent=1))
 
     golden = export_inline(a.db, **ARGS)
@@ -237,6 +281,8 @@ def main(argv=None):
     features_parquet(a.db, look["features"]["layers_yaml"]["layers"], out / "features.parquet")
     planner_parquet(a.db, out / "planner.parquet")
 
+    if a.choices:
+        write_choices(a.db, out)
     (out / "versions.txt").write_text(
         f"roadstyle {getattr(rs, '__version__', None) or version('roadstyle')} {Path(rs.__file__).parent}\n"
         f"mapstyle {getattr(mapstyle, '__version__', None) or version('mapstyle')} {Path(mapstyle.__file__).parent}\n"
