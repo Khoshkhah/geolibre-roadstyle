@@ -204,6 +204,8 @@ def main(argv=None):
         slots_look = {"z_order": dict(rw.ROAD_Z), "width_z20": {c: rw.class_width_px(c, 20) for c in rw._CLASSES},
                       "width_z20_fallback": rw.class_width_px(None, 20)}
         roads_model = _settings.roads()        # step 2 of the full port: the road tables the layer builders read (render_web._load_road_model)
+        # the page metadata of the export: roadstyle:interaction's road popup fields and hover delay (render's defaults)
+        interaction = {"popup": list(rw.DEFAULT_ROAD_POPUP), "hover_delay_ms": inspect.signature(rw.render).parameters["hover_delay_ms"].default}
     finally:
         rs.use_settings(*prev)
     from mapstyle.style import load_style
@@ -216,7 +218,7 @@ def main(argv=None):
             # feature_overlays (the theme's "features" style) and its images, and the arrow image of roadstyle's export
             "features": {"layers_yaml": load_style("layers"), "buildings_3d": load_style()["features"]["buildings_3d"],
                          "style": _theme_features(), "images": _feature_images()},
-            "oneway_image": _oneway_image()}
+            "oneway_image": _oneway_image(), "interaction": interaction}
     (out / "look.json").write_text(json.dumps(look, default=_json, indent=1))
 
     golden = export_inline(a.db, **ARGS)

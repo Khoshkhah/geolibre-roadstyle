@@ -745,3 +745,31 @@ and replaces the deck split in the filters by `true`, so the flat bridges draw a
 
 **For the new version.** The record (`38d10ad`) shows what an exact port needs: GEOS's `BufferInputLineSimplifier` and the collapse of an offset curve on
 the inner side of a sharp bend. A new design could avoid both, for example decks made from the casing pieces of S3 (already exact) instead of buffers.
+
+## The whole style in Rust, and a preview plugin (2026-10-22)
+
+**The whole style.** `makeStyle` (`spike/rust/src/lib.rs`) now makes the complete style that the page draws: `version`, `name`, `center` and
+`zoom` (a port of `_camera`), the layers, the sources, `glyphs`, and the metadata `roadstyle:interaction`, `roadstyle:images` and `roadstyle:planner`.
+It is equal to `golden_full.json` as one object, with tolerance 0 (natively). The 8 tests in `spike/test_compare.py` pass.
+
+**The preview plugin.** `spike/plugin/build_preview.py` makes `dist/roadstyle-rust-preview.zip` (1.5 MB). It is the plugin's own `index.js` with its
+own id (`roadstyle-rust`), name ("roadstyle (Rust preview)"), menu ("roadstyle (Rust)") and style cache, so it can be installed next to the roadstyle
+plugin. Its worker (`spike/plugin/worker.js`) sends the same messages as `py/worker.js`, so `index.js` does not change. Limits:
+
+1. Only the dialog's default choices: all modes, OpenStreetMap colours, Google footpaths. Other choices give an error message.
+2. No 3D bridge decks.
+3. The look data (`look.json`) comes from the fixture, so the build needs `spike/data/` (`tools/make_spike_fixture.py`).
+
+**Test in the real GeoLibre** (`spike/plugin/e2e_preview.py`, headless Chromium, https://web.geolibre.app, `monaco.duckdb`). It installs the zip, opens
+the database with the default choices, and checks the map. Result:
+
+| | First map | Second map (warm) |
+|---|---|---|
+| Start DuckDB and the Rust module | 0.7 s | — |
+| Roads, base map, planner (SQL) | 0.8 s | 0.5 s |
+| Make the style (Rust) and send it | 2.8 s | 2.6 s |
+| Draw (MapLibre) | 2.3 s | 1.4 s |
+| **Click on Open to idle map** | **6.6 s** | **4.5 s** |
+
+The map has 76 roadstyle layers (52 base-map layers), the names, the arrows and the casing pieces. The route planner shows its panel, its two pins
+and a route (66 pieces drawn). No page errors. The plugin with Python takes about 18 s for the first map.

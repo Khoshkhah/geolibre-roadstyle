@@ -3,3 +3,4 @@ __pycache__/
 spike/data/
 spike/rust/target/
 spike/profile/browser_result.json
+dist/roadstyle-rust-preview.zip

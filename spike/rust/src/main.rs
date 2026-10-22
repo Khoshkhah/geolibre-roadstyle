@@ -4,9 +4,9 @@
 //!     (- for no features or no planner)
 //!     cargo run --release -- --layers spike/data/look.json spike/data/layers/all/roads.parquet     # the road layers alone, as {"layers": [...]}
 
-use roadstyle_spike::{layers, overlays, planner, read, roads, simple, slots};
+use roadstyle_spike::{layers, read, roads, simple, slots};
 use serde_json::{json, Value};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::{env, fs, process};
 
 fn fail(msg: String) -> ! {
@@ -45,52 +45,21 @@ fn main() {
     let opt = |i: usize| if layers_only || args[i] == "-" { None } else { Some(fs::read(&args[i]).unwrap_or_else(|e| fail(format!("{}: {e}", args[i])))) };
     let (fdata, pdata) = (opt(3), opt(4));
 
-    let ms = |a: Duration, b: Duration| (b - a).as_secs_f64() * 1e3;
-    let t = Instant::now();
-    let mut feats = read::read_roads(data, "geometry").unwrap_or_else(|e| fail(format!("{roads_path}: {e}")));
-    let t_read = t.elapsed();
-    roads::mark_roads(&mut feats, &look);
-    let roads = roads::roads_source(&feats);
-    let t_roads = t.elapsed();
-    let simple = simple::simple_source(&feats, look.head_m, look.bridge_shadow).unwrap_or_else(|e| fail(e));
-    let t_simple = t.elapsed();
-    let slots = slots::slots_source(&feats, &slot_look);
-    let t_slots = t.elapsed();
-    let (mut ovs, mut images) = (Vec::new(), serde_json::Map::new());
-    if let Some(f) = fdata {
-        let mut fcs = roadstyle_spike::features::feature_collections(f, &look_json).unwrap_or_else(|e| fail(e));
-        let attached = overlays::edge_attach(&mut fcs, &feats);
-        (ovs, images) = overlays::feature_overlays(fcs, &look_json, &attached);
-    }
-    let t_base = t.elapsed();
-    let layers = layers::road_layers(&look_json, features(&roads), features(&simple), features(&slots), &mut ovs).unwrap_or_else(|e| fail(e));
-    let t_layers = t.elapsed();
-    if layers_only {
-        println!("{}", json!({"layers": layers}));
+    if !layers_only {
+        // the whole style, as the worker makes it (make_style), with the total time
+        let t = Instant::now();
+        let text = roadstyle_spike::make_style(data, &fs::read_to_string(look_path).unwrap(), fdata, pdata, None).unwrap_or_else(|e| fail(e));
+        let dt = t.elapsed();
+        fs::write(&args[5], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[5])));
+        eprintln!("make_style {:.0} ms ({:.1} MB)", dt.as_secs_f64() * 1e3, text.len() as f64 / 1e6);
         return;
     }
-    let mut sources = serde_json::Map::new();
-    sources.insert("roads".into(), roads);
-    for (i, ov) in ovs.into_iter().enumerate() {
-        sources.insert(format!("ov{i}"), json!({"type": "geojson", "data": ov.fc, "generateId": true}));
-    }
-    sources.insert("simple".into(), simple);
-    sources.insert("slots".into(), slots);
-    images.insert("oneway".into(), look_json["oneway_image"].clone());
-    let mut metadata = serde_json::Map::new();
-    metadata.insert("roadstyle:images".into(), Value::Object(images));
-    if let Some(p) = pdata {
-        if feats.len() > planner::PLANNER_MAX_EDGES {
-            metadata.insert("roadstyle:planner_skipped".into(), json!(feats.len()));
-        } else {
-            metadata.insert("roadstyle:planner".into(), planner::planner_data(&feats, p).unwrap_or_else(|e| fail(e)));
-        }
-    }
-    let t_planner = t.elapsed();
-    let text = json!({"layers": layers, "sources": sources, "metadata": metadata}).to_string();
-    let t_json = t.elapsed();
-    fs::write(&args[5], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[5])));
-    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, slots {:.0} ms, base map {:.0} ms, layers {:.0} ms, planner {:.0} ms, JSON {:.0} ms ({:.1} MB)",
-              ms(Duration::ZERO, t_read), ms(t_read, t_roads), ms(t_roads, t_simple), ms(t_simple, t_slots), ms(t_slots, t_base), ms(t_base, t_layers),
-              ms(t_layers, t_planner), ms(t_planner, t_json), text.len() as f64 / 1e6);
+    // --layers: the road layers alone, for the 12 subsets of tools/make_layer_goldens.py (no base map)
+    let mut feats = read::read_roads(data, "geometry").unwrap_or_else(|e| fail(format!("{roads_path}: {e}")));
+    roads::mark_roads(&mut feats, &look);
+    let roads = roads::roads_source(&feats);
+    let simple = simple::simple_source(&feats, look.head_m, look.bridge_shadow).unwrap_or_else(|e| fail(e));
+    let slots = slots::slots_source(&feats, &slot_look);
+    let layers = layers::road_layers(&look_json, features(&roads), features(&simple), features(&slots), &mut []).unwrap_or_else(|e| fail(e));
+    println!("{}", json!({"layers": layers}));
 }
