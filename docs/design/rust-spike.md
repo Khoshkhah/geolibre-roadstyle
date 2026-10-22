@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: S0 to S4 are done (2026-10-22). S5 (the written go / no-go) is the section "Result of S4" and the decision after it.
+Status: S0 to S4 are done, and condition 1 of the decision (the knife edge) is fixed on a roadstyle branch (2026-10-22).
 
 ## Question
 
@@ -280,3 +280,29 @@ The layers and the `roads` source are **equal with tolerance 0** to the style th
 - **Condition 3: a decision on the input.** Either duckdb-wasm (JavaScript) reads the `.duckdb` file in the worker and hands Arrow tables to Rust, or `duckosm` writes the tables as Parquet. The levels solver stays offline (`duckosm levels`) in both cases.
 
 Not decided by the spike: who keeps the Rust copy equal to roadstyle after each release. The golden test finds a difference, but someone must port the change.
+
+## Condition 1 done: a short road is cut once (2026-10-22)
+
+**The fix in roadstyle.** Branch `fix/short-road-one-cut` of the roadstyle repository (commit `9d93fcf`, from `v0.24.2`, not pushed and not released).
+`_casing_parts` cuts a road shorter than its two heads once, at `h0`: two pieces, one seam and one lap, as `docs/design/short_road_heads.md` already said.
+The new test `test_short_road_is_cut_once` uses three Monaco roads (edges 305, 84 and 4021) that had the extra pieces natively. It fails without the fix.
+All 439 roadstyle tests pass (`tests/test_studio_samples.py` not run: it needs `streamlit`). CHANGELOG: under "Unreleased".
+
+**The same rule in Rust** (`spike/rust/src/simple.rs`).
+
+**The result.** The three styles were made again with the fix: native (`PYTHONPATH=<the branch>/src tools/make_spike_fixture.py`), Pyodide
+(`spike/profile/run_browser.py --golden ... --pkgs <a pkgs.zip of the branch>`) and wasm (`spike/wasm/run_browser.py`).
+
+| Pair | Pieces | Knife edge | One rounding step (about 1 cm) | Plain compare, `--tol 2e-7` |
+|---|---|---|---|---|
+| Native Python and Pyodide | 46,876 and 46,876 | 0 | 14 edges | equal |
+| Pyodide and Rust wasm | 46,876 and 46,876 | 0 | 9 edges | equal |
+| Native Python and Rust wasm | 46,876 and 46,876 | 0 | 5 edges | equal |
+
+Native Rust still equals native Python with tolerance 0 (`spike/test_compare.py`, 6 tests). The style has 654 pieces fewer than before (47,530):
+many short roads had a doubled seam and lap on every platform, not only on the 78 edges that differed. The map looks the same.
+
+Since the fix, `spike/compare.py --tol 2e-7` is enough for the browser outputs. `spike/compare_pieces.py` stays as the record of the old case.
+
+**Note on the fixture.** `spike/data/` is now made with the roadstyle branch, not the installed 0.24.2. Until a release has the fix, make it with
+`PYTHONPATH=<the roadstyle branch>/src`.

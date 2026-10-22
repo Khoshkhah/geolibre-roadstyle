@@ -1,6 +1,7 @@
 """rs_profile.py in Pyodide, in headless Chromium, with the plugin's own setup (py/worker.js: the CDN version, the packages, py/pkgs.zip).
 
     mapstyle/.venv/bin/python spike/profile/run_browser.py monaco.duckdb        # about 40 s with the CDN files in the browser's cache
+    mapstyle/.venv/bin/python spike/profile/run_browser.py monaco.duckdb --golden spike/data/golden_pyodide.json [--pkgs other.zip]
 
 Serves a temporary folder (this folder's files, pkgs.zip and the database), opens index.html and waits for the worker's result."""
 import functools
@@ -18,11 +19,12 @@ HERE = Path(__file__).resolve().parent
 PKGS = HERE.parent.parent / "py" / "pkgs.zip"
 
 
-def main(db, golden=None):
-    """The profile; with ``golden`` (a path): the spike's golden style made in Pyodide instead, written there."""
+def main(db, golden=None, pkgs=PKGS):
+    """The profile; with ``golden`` (a path): the spike's golden style made in Pyodide instead, written there. ``pkgs``: the zip of
+    roadstyle, mapstyle and branca to run (default: the plugin's py/pkgs.zip)."""
     with tempfile.TemporaryDirectory() as tmp:
         for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (HERE / "rs_profile.py", "rs_profile.py"),
-                          (PKGS, "pkgs.zip"), (Path(db).resolve(), "monaco.duckdb")):
+                          (Path(pkgs).resolve(), "pkgs.zip"), (Path(db).resolve(), "monaco.duckdb")):
             os.symlink(src, Path(tmp) / name)
 
         class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -57,4 +59,10 @@ def main(db, golden=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None))
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("db")
+    ap.add_argument("--golden", help="write the spike's golden style made in Pyodide to this path, instead of the profile")
+    ap.add_argument("--pkgs", default=str(PKGS), help="the zip of roadstyle, mapstyle and branca (default: py/pkgs.zip)")
+    a = ap.parse_args()
+    sys.exit(main(a.db, a.golden, a.pkgs))

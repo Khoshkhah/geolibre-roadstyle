@@ -130,13 +130,16 @@ fn casing_parts(roads: &[Feature], head_m: f64) -> Vec<Piece> {
         };
         let line = Line::new(c);
         let n = line.len();
-        let (mut h0, mut h1) = (p.get("__rs_hs").and_then(Value::as_f64).unwrap_or(head_m), p.get("__rs_he").and_then(Value::as_f64).unwrap_or(head_m));
-        if h0 + h1 >= n - 0.05 {
-            // a short road: two pieces, cut in the heads' ratio
-            (h0, h1) = (n * h0 / (h0 + h1), n * h1 / (h0 + h1));
-        }
-        let cuts = [(0.0, h0, cs), (h0, n - h1, cm), (n - h1, n, ce)];
-        for (k, &(a, b, num)) in cuts.iter().enumerate() {
+        let (h0, h1) = (p.get("__rs_hs").and_then(Value::as_f64).unwrap_or(head_m), p.get("__rs_he").and_then(Value::as_f64).unwrap_or(head_m));
+        // k: 0 the start head, 1 the main part, 2 the end head. A short road is cut once, in the heads' ratio (roadstyle after 0.24.2,
+        // short_road_heads.md "One cut"): two cuts at h0 and n - h1 are one point only in exact arithmetic
+        let cuts: Vec<(f64, f64, i64, usize)> = if h0 + h1 >= n - 0.05 {
+            let h0 = n * h0 / (h0 + h1);
+            vec![(0.0, h0, cs, 0), (h0, n, ce, 2)]
+        } else {
+            vec![(0.0, h0, cs, 0), (h0, n - h1, cm, 1), (n - h1, n, ce, 2)]
+        };
+        for &(a, b, num, k) in &cuts {
             let pts = line.part(a, b);
             if pts.len() < 2 || !pts.windows(2).any(|w| w[0] != w[1]) {
                 continue;
@@ -157,13 +160,13 @@ fn casing_parts(roads: &[Feature], head_m: f64) -> Vec<Piece> {
             out.push(Piece { props: q, coords: Some(line.lonlat(&pts, 1e7)) });
         }
         // a seam at each cut inside the edge, at the lower of the two pieces' numbers; below zoom 17 a flat lap instead
-        let mut cut_at: Vec<f64> = vec![h0, n - h1];
+        let mut cut_at: Vec<f64> = cuts[1..].iter().map(|c| c.0).collect();
         cut_at.retain(|&x| x != 0.0 && x != n);
         cut_at.sort_by(f64::total_cmp);
         cut_at.dedup_by(|a, b| a == b);
         for &cut in &cut_at {
-            let near: Vec<&(f64, f64, i64)> = cuts.iter().filter(|(a, b, _)| b - a > 1e-9 && ((b - cut).abs() < 1e-9 || (a - cut).abs() < 1e-9)).collect();
-            let half = near.iter().map(|(a, b, _)| (b - a) / 4.0).fold(SEAM_M, f64::min);
+            let near: Vec<&(f64, f64, i64, usize)> = cuts.iter().filter(|(a, b, _, _)| b - a > 1e-9 && ((b - cut).abs() < 1e-9 || (a - cut).abs() < 1e-9)).collect();
+            let half = near.iter().map(|(a, b, _, _)| (b - a) / 4.0).fold(SEAM_M, f64::min);
             let pts = line.part((cut - half).max(0.0), (cut + half).min(n));
             if near.len() < 2 || pts.len() < 2 {
                 continue;
@@ -176,7 +179,7 @@ fn casing_parts(roads: &[Feature], head_m: f64) -> Vec<Piece> {
             if truthy(base.get("__rs_dash")) || truthy(base.get("__rs_tunnel")) {
                 continue; // a solid lap would fill a dashed casing's gaps
             }
-            let half = near.iter().map(|(a, b, _)| (b - a) / 2.0).fold(LAP_M, f64::min);
+            let half = near.iter().map(|(a, b, _, _)| (b - a) / 2.0).fold(LAP_M, f64::min);
             let pts = line.part((cut - half).max(0.0), (cut + half).min(n));
             q.insert("__rs_cap".into(), true.into());
             q.insert("__rs_lap".into(), true.into());
