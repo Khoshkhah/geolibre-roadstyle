@@ -1,6 +1,6 @@
 # Design: routing in the roadstyle plugin
 
-**Status:** proposal, 2026-10-22. Nothing is coded. It waits for sign-off.
+**Status:** proposal, 2026-10-22 (changed the same day: the panel is duckOSM's own route-planner panel). Nothing is coded. It waits for sign-off.
 
 ## Goal
 
@@ -18,14 +18,23 @@ route, with time, length and turn-by-turn steps. Routing runs in the browser. No
 
 ## Proposal
 
+The plugin shows **the same panel as `duckosm route-map`** (Kaveh's request), not a new one. The panel of the page is designed in duckOSM's
+`docs/design/route_planner_panel.md`: a header, the mode as a segmented control (Walk, Cycle, Drive, and the combined modes), Fastest or Shortest, a card for
+the start (violet, A) and the end (amber, B) with the name of the nearest road and a swap button, a summary card (time in large type, the distance, a bar
+of the legs in the colour of each mode), a timeline of steps (a click flies to the step), and a closed "Options" block (radius, walking speed, `edge_id`).
+
 1. **Data.** The worker returns the planner data with the style, when the user chooses "Route planner: on" in the dialog (default off).
    `mapstyle.export.export_inline(db, planner=True)` puts the graphs in the style's metadata (`roadstyle:planner`). Monaco: about 2 MB.
-2. **Code.** The routing code of `planner.html` moves into one JavaScript file, `planner-core.js`, in mapstyle: the heap, `routeOne`, `routeMulti`,
-   snapping, `directions`. It has no DOM and no map calls. `planner.html` and the plugin both load it, so there is one copy of the algorithms and one
-   set of tests. This is mapstyle 0.11.
-3. **Plugin.** A new menu item **Route planner** opens a floating panel: the mode, fastest or shortest, the start and the end (two markers that you drag),
-   the summary (time, length), and the steps (a click on a step zooms to it). The route is drawn as a GeoJSON line (casing and fill, coloured by leg)
-   in a row "route" of the Features folder, so it is over the roads. The row can be switched off.
+2. **Code, in three parts, in mapstyle (0.11).** `planner.html` is split so that the page and the plugin share everything:
+   - `planner-core.js`: the heap, `routeOne`, `routeMulti`, snapping, `directions`. No DOM, no map calls. Unit tests in Node.
+   - `planner-panel.html` and `planner-panel.css`: the markup and the CSS of the panel, as they are in the page now (the ids `rm-*` stay).
+   - `planner-ui.js`: the wiring of the panel, the markers and the map (the code that `planner.html` has after the algorithms).
+   The page assembles the three files, so `duckosm route-map` looks and works as today (its tests stay). The plugin loads the same three files as assets,
+   as it does with `popup.css` and `popup.js`.
+3. **Plugin (0.19).** A menu item **Route planner** opens the panel in GeoLibre's **right panel** (`registerRightPanel`), which is where the page has its side
+   panel. The panel follows GeoLibre's light or dark theme (the page's own theme button is hidden). On a narrow screen GeoLibre's own layout applies. The
+   route is drawn as GeoJSON lines (casing and fill, coloured by leg) in a row "route" of the Features folder, over the roads, so it can be switched off.
+   The two markers are the page's pins (A violet, B amber).
 4. **No clash with GeoLibre's tools.** The markers use their own mouse handling and stop while a GeoLibre tool (Identify, …) is on, as the road popup does.
 
 ## Choice: where does the routing run?
@@ -57,5 +66,5 @@ Lane advice, exit numbers, spoken directions, saved routes, a route from a typed
 ## Decisions for Kaveh
 
 1. A or B? (Recommendation: A.)
-2. The panel: a floating panel (recommended; the user can move it) or the right panel?
+2. The panel in GeoLibre's right panel (recommended, as the page's side panel) or a floating panel?
 3. Modes in the first version: all four (as the page has them), or driving and walking only?
