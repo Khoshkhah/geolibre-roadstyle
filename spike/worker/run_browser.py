@@ -91,7 +91,7 @@ def main(argv=None):
     print("1. the roads table from SQL against roads.parquet (Python):", msg)
     rc = 0 if ok else 1
     ov = ",".join(f"sources.ov{i}" for i in range(sum(1 for k in json.loads((DATA / "golden_full.json").read_text())["sources"] if k.startswith("ov"))))
-    for what, ref, only, tol in (("layers (roads, base map, decks)", "golden_3d.json", "layers", "0"), ("roads", "golden.json", "sources.roads", "0"),
+    for what, ref, only, tol in (("layers (roads and base map)", "golden_full.json", "layers", "0"), ("roads", "golden.json", "sources.roads", "0"),
                                  ("base-map sources", "golden_full.json", ov, "1e-12"), ("images", "golden_full.json", "metadata.roadstyle:images", "0"),
                                  ("planner data", "golden_full.json", "metadata.roadstyle:planner", "0"),
                                  ("simple", "golden.json", "sources.simple", "2e-7"),
@@ -100,9 +100,7 @@ def main(argv=None):
                            capture_output=True, text=True)
         print(f"2. {what} against {ref} (tolerance {tol}):", c.stdout.strip().replace("\n", "; ")[:400])
         rc = rc or c.returncode
-    d = subprocess.run([sys.executable, str(SPIKE / "compare_decks.py"), str(DATA / "golden_3d.json"), str(made)], capture_output=True, text=True)
-    print("3. the 3D bridge decks against golden_3d.json:", d.stdout.strip().replace("\n", "; "))
-    return rc or d.returncode
+    return rc
 
 
 if __name__ == "__main__":

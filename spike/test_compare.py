@@ -41,9 +41,10 @@ def test_rust_style_equals_golden(tmp_path):
     r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden.json"), str(out), "--only", "sources.roads,sources.simple",
                         "--tol", "0"], capture_output=True, text=True)
     assert r.stdout.strip() == "equal", r.stdout
-    # step 3: the base-map sources (with the street of each crossing and signal) and the images against the whole map. The layers: in
-    # test_rust_decks_against_golden_3d (the style has the 3D decks, as the plugin's: golden_full.json is made with view_3d=False)
+    # steps 2 and 3: all the layers (roads and base map, made in Rust) against the whole map, with tolerance 0; the base-map sources (with the
+    # street of each crossing and signal) within 1e-12 (a centroid summed in another order); the images
     golden, made = json.loads((data / "golden_full.json").read_text()), json.loads(out.read_text())
+    assert diff(golden["layers"], made["layers"], tol=0) == []
     ov = [k for k in golden["sources"] if k.startswith("ov")]
     assert len(ov) == len([k for k in made["sources"] if k.startswith("ov")]) and diff({k: golden["sources"][k] for k in ov}, {k: made["sources"].get(k) for k in ov}, tol=1e-12) == []
     assert golden["metadata"]["roadstyle:images"] == made["metadata"]["roadstyle:images"]
@@ -87,24 +88,6 @@ def test_rust_base_map_sources_equal_golden():
     assert len(fcs) == len([k for k in golden if k.startswith("ov")])
     for i, (name, fc) in enumerate(fcs.items()):
         assert diff(strip(golden[f"ov{i}"]["data"]["features"]), strip(fc["features"]), tol=1e-12) == [], name
-
-
-def test_rust_decks_against_golden_3d(tmp_path):
-    """Full port step 5 (started): the style as the plugin gets it (view_3d=True, golden_3d.json): every layer with tolerance 0; the deck
-    features by compare_decks.py's rules (99 % aligned, the same properties, the straight parts exact; the bent parts are only reported)."""
-    here, data = Path(__file__).parent, Path(__file__).parent / "data"
-    if not (data / "golden_3d.json").exists() or shutil.which("cargo") is None:
-        return
-    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
-    out = tmp_path / "made.json"
-    subprocess.run([str(here / "rust" / "target" / "release" / "roadstyle-spike"), *(str(data / f) for f in ("look.json", "roads.parquet",
-                    "features.parquet", "planner.parquet")), str(out)], check=True, capture_output=True)
-    golden, made = json.loads((data / "golden_3d.json").read_text()), json.loads(out.read_text())
-    assert diff(golden["layers"], made["layers"], tol=0) == []
-    sys.path.insert(0, str(here))
-    from compare_decks import compare
-    ok, lines = compare(golden["sources"]["decks"]["data"]["features"], made["sources"]["decks"]["data"]["features"])
-    assert ok, lines
 
 
 def test_compare_pieces_finds_a_real_change(tmp_path):

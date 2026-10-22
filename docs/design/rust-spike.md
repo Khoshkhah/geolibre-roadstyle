@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: steps 1 to 4 of the full port are done; step 5 (the 3D bridge decks) is started (2026-10-22).
+Status: steps 1 to 4 of the full port are done; the 3D bridge decks (step 5) are not in the port until a new version of them exists (2026-10-22).
 
 ## Question
 
@@ -730,3 +730,18 @@ How much it matters: the plugin hides the decks unless the user chooses them ("3
 16. A slab up to 4 m off at a sharp bend of a ramp would show in a tilted 3D view.
 
 **Time** (Chromium): the worker 3.31 s, the page has the style after 3.58 s. Natively the decks take about 15 ms.
+
+## Decision: no 3D bridge decks in the port, for now (2026-10-22)
+
+Kaveh: the 3D bridges have issues; do not use them until a new version of them exists.
+
+**Done.** The decks are out of the port: the Rust module makes the style with no decks (as `view_3d=False`), and the tests and the worker compare it
+with the golden files without decks (`golden_full.json`). The port of the decks is kept in the history: commit `38d10ad` (`spike/rust/src/decks.rs`,
+`spike/compare_decks.py`, the deck layers in `layers.rs`); the next commit removed it.
+
+**What the user sees.** The same map as the plugin's default today. With "3D bridge decks: off" (the dialog's default), the plugin hides the deck layers
+and replaces the deck split in the filters by `true`, so the flat bridges draw at every zoom: a style without decks draws exactly that. The dialog's
+"3D bridge decks: on" has no decks to show in the port.
+
+**For the new version.** The record (`38d10ad`) shows what an exact port needs: GEOS's `BufferInputLineSimplifier` and the collapse of an offset curve on
+the inner side of a sharp bend. A new design could avoid both, for example decks made from the casing pieces of S3 (already exact) instead of buffers.

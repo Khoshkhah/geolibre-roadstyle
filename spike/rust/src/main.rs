@@ -4,7 +4,7 @@
 //!     (- for no features or no planner)
 //!     cargo run --release -- --layers spike/data/look.json spike/data/layers/all/roads.parquet     # the road layers alone, as {"layers": [...]}
 
-use roadstyle_spike::{decks, layers, overlays, planner, read, roads, simple, slots};
+use roadstyle_spike::{layers, overlays, planner, read, roads, simple, slots};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
@@ -63,23 +63,14 @@ fn main() {
         (ovs, images) = overlays::feature_overlays(fcs, &look_json, &attached);
     }
     let t_base = t.elapsed();
-    // the decks: as the plugin's export (view_3d=True); not in --layers, whose golden layers are made with view_3d=False
-    let model = layers::Model::from_look(&look_json).unwrap_or_else(|e| fail(e));
-    let (fc, bent) = if layers_only { (json!({"type": "FeatureCollection", "features": []}), 0) } else { decks::bridge_decks(&feats, &look_json, &model) };
-    let decks = json!({"type": "geojson", "data": fc, "generateId": true});
-    let t_decks = t.elapsed();
-    let layers = layers::road_layers(&look_json, features(&roads), features(&simple), features(&slots), &mut ovs, features(&decks)).unwrap_or_else(|e| fail(e));
+    let layers = layers::road_layers(&look_json, features(&roads), features(&simple), features(&slots), &mut ovs).unwrap_or_else(|e| fail(e));
     let t_layers = t.elapsed();
     if layers_only {
         println!("{}", json!({"layers": layers}));
         return;
     }
-    let n_decks = features(&decks).len();
     let mut sources = serde_json::Map::new();
     sources.insert("roads".into(), roads);
-    if n_decks > 0 {
-        sources.insert("decks".into(), decks);
-    }
     for (i, ov) in ovs.into_iter().enumerate() {
         sources.insert(format!("ov{i}"), json!({"type": "geojson", "data": ov.fc, "generateId": true}));
     }
@@ -99,7 +90,7 @@ fn main() {
     let text = json!({"layers": layers, "sources": sources, "metadata": metadata}).to_string();
     let t_json = t.elapsed();
     fs::write(&args[5], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[5])));
-    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, slots {:.0} ms, base map {:.0} ms, decks {:.0} ms ({n_decks}, {bent} bent parts), layers {:.0} ms, \
-               planner {:.0} ms, JSON {:.0} ms ({:.1} MB)", ms(Duration::ZERO, t_read), ms(t_read, t_roads), ms(t_roads, t_simple), ms(t_simple, t_slots),
-              ms(t_slots, t_base), ms(t_base, t_decks), ms(t_decks, t_layers), ms(t_layers, t_planner), ms(t_planner, t_json), text.len() as f64 / 1e6);
+    eprintln!("read {:.0} ms, roads {:.0} ms, simple {:.0} ms, slots {:.0} ms, base map {:.0} ms, layers {:.0} ms, planner {:.0} ms, JSON {:.0} ms ({:.1} MB)",
+              ms(Duration::ZERO, t_read), ms(t_read, t_roads), ms(t_roads, t_simple), ms(t_simple, t_slots), ms(t_slots, t_base), ms(t_base, t_layers),
+              ms(t_layers, t_planner), ms(t_planner, t_json), text.len() as f64 / 1e6);
 }

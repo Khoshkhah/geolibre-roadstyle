@@ -138,12 +138,6 @@ impl Model {
         Value::Array(e)
     }
 
-    /// A bridge deck's width in px at zoom z (_bridge_decks): its class's group by the exact class name (a link is not its main class).
-    pub(crate) fn deck_px(&self, highway: Option<&str>, z: f64) -> f64 {
-        let g = highway.and_then(|h| self.group.iter().find(|(c, _)| c == h)).map_or(self.fb_group.as_str(), |(_, g)| g.as_str());
-        self.gwidth(g, z)
-    }
-
     /// _offset_match: a two-way direction's offset at zoom z, per class.
     pub fn offset_match(&self, col: &str, z: f64) -> Value {
         let ramp = ((z - self.offset_zoom) / self.ramp_zooms).clamp(0.0, 1.0);
@@ -505,12 +499,11 @@ fn props_of<'a>(fs: &'a [Value], empty: &'a Map<String, Value>) -> Vec<&'a Map<S
 
 /// The road layers of the style: what render_web.render, the export and mapstyle's export make for simple mode with stored levels and
 /// inline data (no base-map layers, no 3D decks, no metre widths, no items). `roads`, `simple`, `slots`: the features of the three sources.
-pub fn road_layers(look: &Value, roads: &[Value], simple: &[Value], slots: &[Value], ovs: &mut [Overlay], decks: &[Value]) -> Result<Vec<Value>, String> {
+pub fn road_layers(look: &Value, roads: &[Value], simple: &[Value], slots: &[Value], ovs: &mut [Overlay]) -> Result<Vec<Value>, String> {
     let m = Model::from_look(look)?;
     let (th, cfg) = (&look["theme"], &look["config"]);
     let empty = Map::new();
-    let (rp, sp, lp, dp) = (props_of(roads, &empty), props_of(simple, &empty), props_of(slots, &empty), props_of(decks, &empty));
-    let (deck_opacity, flat_below) = crate::decks::deck_layer_values(look);
+    let (rp, sp, lp) = (props_of(roads, &empty), props_of(simple, &empty), props_of(slots, &empty));
     let fb_fill = &th["roads"]["fallback"]["fill"];
     let fb_casing = &th["roads"]["fallback"]["casing"];
     let sel = &th["selection"];
@@ -534,9 +527,7 @@ pub fn road_layers(look: &Value, roads: &[Value], simple: &[Value], slots: &[Val
     let lean_layout = |l: &Value| { let mut o = l.as_object().unwrap().clone(); o.insert("visibility".into(), "none".into()); Value::Object(o) };
 
     // roads-simple and the invisible roads-fill (simple mode)
-    // the 3D decks (view_3d): the flat bridge draws below flat_below, the deck from it up
-    let flt = if decks.is_empty() { json!(["all", seam_filter()]) }
-              else { json!(["all", seam_filter(), ["any", ["<", ["zoom"], flat_below], ["!", ["to-boolean", ["get", "__rs_bridge"]]]]]) };
+    let flt = json!(["all", seam_filter()]);
     let k = |n: i64| json!(["==", ["get", "__rs_k"], n]);
     let (is_c, is_sh, is_b) = (k(0), k(2), json!(["to-boolean", ["get", "__rs_bridge"]]));
     let blur = cfg["bridge_shadow_blur"].as_f64().unwrap();
@@ -652,27 +643,7 @@ pub fn road_layers(look: &Value, roads: &[Value], simple: &[Value], slots: &[Val
                                       "symbol-sort-key": sort},
                            "paint": lpaint}));
     }
-    if decks.is_empty() {
-        layers.push(highlight);
-    } else {
-        // the highlight on a flat bridge only below flat_below (position mode: "bridge" is never true), then the deck casing and the decks
-        let bridge = json!(["!", ["to-boolean", 1]]);
-        let mut hl = highlight;
-        hl["filter"] = json!(["!", bridge]);
-        let mut hb = hl.clone();
-        hb["id"] = "roads-highlight-bridge".into();
-        hb["maxzoom"] = flat_below.clone();
-        hb["filter"] = bridge;
-        layers.push(hl);
-        layers.push(hb);
-        layers.push(json!({"id": "roads-deck-casing", "type": "fill-extrusion", "source": "decks", "minzoom": flat_below, "filter": ["has", "__rs_casing_slab"],
-                           "paint": {"fill-extrusion-color": cfg["bridge_casing_color"], "fill-extrusion-base": ["get", "__rs_base"],
-                                     "fill-extrusion-height": ["get", "__rs_height"], "fill-extrusion-opacity": deck_opacity}}));
-        layers.push(json!({"id": "roads-bridge-decks", "type": "fill-extrusion", "source": "decks", "minzoom": flat_below, "filter": ["!", ["has", "__rs_casing_slab"]],
-                           "paint": {"fill-extrusion-color": ["case", s_on, select, h_on, hover, ["coalesce", ["get", "__rs_fill"], fb_fill]],
-                                     "fill-extrusion-base": ["get", "__rs_base"], "fill-extrusion-height": ["get", "__rs_height"],
-                                     "fill-extrusion-opacity": deck_opacity}}));
-    }
+    layers.push(highlight);
 
     // the passes: a reverse pair's second edge draws nowhere; the layers no feature can draw go; the fill's opacity switch
     if any_dup {
@@ -681,8 +652,7 @@ pub fn road_layers(look: &Value, roads: &[Value], simple: &[Value], slots: &[Val
             l["filter"] = match l.get("filter") { Some(f) => json!(["all", f, nd]), None => nd.clone() };
         }
     }
-    let feats: HashMap<&str, Vec<&Map<String, Value>>> = [("roads", rp.clone()), ("slots", lp.clone()), ("arrows", lp.clone()), ("simple", sp.clone()),
-                                                          ("decks", dp.clone())].into();
+    let feats: HashMap<&str, Vec<&Map<String, Value>>> = [("roads", rp.clone()), ("slots", lp.clone()), ("arrows", lp.clone()), ("simple", sp.clone())].into();
     let mut layers = drop_empty_layers(layers, &feats);
     for l in layers.iter_mut().filter(|l| l["id"].as_str().is_some_and(|i| i.starts_with("roads-fill") && !i.ends_with("-pat"))) {
         let v = l["paint"].get("line-opacity").cloned().unwrap_or(json!(1));
