@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: steps 1 to 4 of the full port are done (the worker makes the roads, the base map and the planner data with no Python), checked against roadstyle 0.24.3 and mapstyle 0.12.0 (2026-10-22). Step 5 (the 3D bridge decks) is next.
+Status: steps 1 to 4 of the full port are done; step 5 (the 3D bridge decks) is started (2026-10-22).
 
 ## Question
 
@@ -678,3 +678,55 @@ centroid sums `length * midpoint` as GEOS does (the order of the operations chan
 (`roadstyle:interaction`, `center`, `zoom`, `name`, `glyphs`, `version`), the other choices of the plugin's dialog (the mode, the colours, the path
 style: today the look is one `look.json` for mode all, `osm` and theme `osm`; the build would make one look per choice), the `split` of the first
 picture (no names and arrows first), and the tuning of the Rust code (a struct per road and piece).
+
+## Full port, step 5: the 3D bridge decks, plan (2026-10-22)
+
+**Why it is needed.** The plugin's style always has the decks: roadstyle's `export_inline` sets `view_3d=True`, and the worker does not change it. The
+dialog's "3D bridge decks" choice only acts in `index.js`: off (the default) hides the deck layers and rewrites the flat layers' deck split
+(`["<", ["zoom"], 16]`) so the flat bridges draw at every zoom. So the golden files of steps 1 to 4 (`view_3d=False`) are not quite what the plugin
+gets: `spike/data/golden_3d.json` is (`export_inline(db, layers=True, planner=True)`, the defaults).
+
+**What the decks change** (Monaco): a `decks` source (1,311 polygons: 517 deck ribbons and 794 casing slabs; 1,116 of them have 5 points, a rectangle),
+two layers after the highlight (`roads-deck-casing`, `roads-bridge-decks`), the deck split in the filters of `roads-simple` and `roads-fill`, and the
+highlight's filter. Every other source is the same.
+
+**`_bridge_decks`** (render_web.py, 216 lines):
+
+| Part | Exact in Rust? |
+|---|---|
+| The bridge edges, their twins, the chains through degree-2 nodes, the spans of each edge in its chain, the true ground ends | Yes (the graph code of S6) |
+| The ramp: the cuts every `step_m` near a ground end, at the span boundaries; the smoothstep height; the widths (the class width at `match_zoom`, `width_scale`) | Yes |
+| `shapely.ops.substring` (a part of the chain between two cuts) | Yes: shapely's Python and GEOS's interpolate |
+| The properties of each ribbon (its edge's, `__rs_base`, `__rs_height`, `__rs_chain`, `__rs_edges`) and of each slab | Yes |
+| The polygons: `buffer` (flat caps, mitre joins), and for a two-way bridge and the slabs `offset_curve` (round joins, 8 segments a quarter) first | A straight part (two points) is a rectangle: exact up to where GEOS starts the ring. A bent part needs GEOS's buffer and offset-curve builders: not exact |
+
+**Pass rule.** 1. The layers equal `golden_3d.json` with tolerance 0. 2. The deck features: the same number, the same properties in the same order.
+3. The polygon of a straight part equals GEOS's within 1e-6 deg (one rounding step), the ring compared from its lowest point and in one orientation.
+4. A bent part's polygon: within 0.1 m of GEOS's (the largest distance between their outlines), and the number of such parts reported.
+
+## Full port, step 5: progress (2026-10-22)
+
+`spike/rust/src/decks.rs` (about 330 lines) ports `_bridge_decks`: the bridge chains and twins, the ramp cuts, `shapely.ops.substring`, the widths and
+heights, the properties, and the polygons: GEOS's offset arithmetic (`computeOffsetSegment`) and ring order (from the end's left point, clockwise) for a
+straight part; mitre joins (buffer) and round joins (`offset_curve`) computed here for a bent part. `layers.rs` adds what the decks change: the deck split
+in the filters of `roads-simple` and `roads-fill`, the highlight's filter, and the two deck layers. `make_style` always makes the decks, as the plugin's
+export does. `spike/compare_decks.py` compares two deck sources; `test_rust_decks_against_golden_3d` checks them (9 tests in all).
+
+Against `golden_3d.json` (the style exactly as the plugin gets it), natively and in Chromium:
+
+| Check | Result |
+|---|---|
+| All 61 layers | **Equal**, tolerance 0 |
+| The deck features | 1,311 and 1,312: 1,309 align (99.8 %); 2 only in GEOS's, 3 only in Rust's: slabs on the inner side of a sharp bend, where GEOS makes none or two |
+| The properties of the aligned features | **All equal**, tolerance 0 |
+| The straight parts (four corners on both sides) | **1,104 of 1,104 equal** within 1e-6 deg |
+| The bent parts (205) | The outline distance: median 0 m, 90 % 0.29 m, largest 4.2 m |
+
+**Not exact yet: the bent parts.** Two GEOS behaviours are not ported: `BufferInputLineSimplifier` (before a buffer, GEOS drops the vertices that are
+nearly on a straight line, within 1 % of the distance: 11 parts that GEOS makes into rectangles have 6 to 8 corners here) and the collapse of an offset
+curve on the inner side of a sharp bend (the slabs that GEOS leaves out or splits). Porting these two is the next part of step 5.
+
+How much it matters: the plugin hides the decks unless the user chooses them ("3D bridge decks: off" is the default), and a deck draws only from zoom
+16. A slab up to 4 m off at a sharp bend of a ramp would show in a tilted 3D view.
+
+**Time** (Chromium): the worker 3.31 s, the page has the style after 3.58 s. Natively the decks take about 15 ms.

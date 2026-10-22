@@ -1,6 +1,7 @@
 //! Spike (docs/design/rust-spike.md): the road part of the roadstyle style, from the roads in a GeoParquet file. The same function
 //! runs natively (main.rs) and in the browser (`makeStyle`, the wasm32 build, through wasm-bindgen).
 
+pub mod decks;
 pub mod features;
 pub mod geom;
 pub mod layers;
@@ -31,9 +32,16 @@ pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, plann
         let attached = overlays::edge_attach(&mut fcs, &feats);
         (ovs, images) = overlays::feature_overlays(fcs, &look_json, &attached);
     }
-    let layers = layers::road_layers(&look_json, source_features(&roads), source_features(&simple), source_features(&slots), &mut ovs)?;
+    // the 3D bridge decks: always, as the plugin's export makes them (roadstyle's export_inline: view_3d=True); the plugin hides them unless chosen
+    let model = layers::Model::from_look(&look_json)?;
+    let decks = json!({"type": "geojson", "data": decks::bridge_decks(&feats, &look_json, &model).0, "generateId": true});
+    let deck_features = source_features(&decks).to_vec();
+    let layers = layers::road_layers(&look_json, source_features(&roads), source_features(&simple), source_features(&slots), &mut ovs, &deck_features)?;
     let mut sources = serde_json::Map::new();
     sources.insert("roads".into(), roads);
+    if !deck_features.is_empty() {
+        sources.insert("decks".into(), decks);
+    }
     for (i, ov) in ovs.into_iter().enumerate() {
         sources.insert(format!("ov{i}"), json!({"type": "geojson", "data": ov.fc, "generateId": true}));
     }

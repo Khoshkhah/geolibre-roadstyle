@@ -234,6 +234,9 @@ def main(argv=None):
     (out / "golden_full.json").write_text(json.dumps(full, separators=(",", ":"), default=_json))
     features_parquet(a.db, look["features"]["layers_yaml"]["layers"], out / "features.parquet")
     planner_parquet(a.db, out / "planner.parquet")
+    # step 5: the style exactly as the plugin gets it: roadstyle's export_inline defaults to view_3d=True (the 3D bridge decks)
+    full3d = export_inline(a.db, layers=True, planner=True)
+    (out / "golden_3d.json").write_text(json.dumps(full3d, separators=(",", ":"), default=_json))
 
     (out / "versions.txt").write_text(
         f"roadstyle {getattr(rs, '__version__', None) or version('roadstyle')} {Path(rs.__file__).parent}\n"
