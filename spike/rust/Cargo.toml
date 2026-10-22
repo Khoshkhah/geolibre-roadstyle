@@ -1,0 +1,11 @@
+[package]
+name = "roadstyle-spike"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Spike: the roads of the roadstyle style in Rust (docs/design/rust-spike.md)"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[workspace]

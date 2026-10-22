@@ -1,2 +1,4 @@
 out/
 __pycache__/
+spike/data/
+spike/rust/target/
