@@ -12,6 +12,7 @@ Needs mapstyle and roadstyle (the venv of the mapstyle project has them).
 """
 import argparse
 import dataclasses
+import inspect
 import json
 from importlib.metadata import version
 from pathlib import Path
@@ -28,6 +29,25 @@ def _json(o):
     if isinstance(o, (set, frozenset, tuple)):
         return sorted(o, key=str) if isinstance(o, (set, frozenset)) else list(o)
     raise TypeError(f"{type(o)} is not JSON")
+
+
+def _class_styles(palette, config):
+    """``{"classes": {class: [plain, link]}, "fallback": [plain, link]}``: each class's style as roadstyle's ClassStyler resolves it (no tunnel and
+    no bridge: the web renderer's styler gets no tunnel or bridge column). A pure function of the class, so it is look data, not code to port."""
+    from roadstyle.palettes import FALLBACK, PALETTES
+    from roadstyle.style import _apply
+    from roadstyle.stylers import _dash_str
+
+    table = PALETTES[palette]
+
+    def res(s):
+        out = []
+        for link in (False, True):
+            p = _apply(s, link, False, False, config)
+            out.append({"fill": p.fill, "width": p.width, "casing": p.casing, "casing_width": p.casing_width, "dash": _dash_str(p.dash),
+                        "opacity": p.opacity, "casing_opacity": p.casing_opacity})
+        return out
+    return {"classes": {c: res(s) for c, s in table.items()}, "fallback": res(table.get(FALLBACK) or next(iter(table.values())))}
 
 
 def main(argv=None):
@@ -60,11 +80,15 @@ def main(argv=None):
     rs.use_settings(*prev, settings)
     try:
         theme, config = _settings.theme(), dataclasses.asdict(rw.CONFIG)
+        styles = _class_styles(got["palette"], rw.CONFIG)
+        head_m = inspect.signature(rw.render).parameters["head_m"].default
     finally:
         rs.use_settings(*prev)
     look = {"palette": got["palette"], "settings": settings,
             "args": {k: v for k, v in kw.items() if k != "overlays"},      # name, tooltip, level columns, ... (the overlays are the base map)
-            "theme": theme, "config": config}
+            "theme": theme, "config": config,
+            # what the Rust code reads (S2): the class styles as the styler resolves them, and the render's defaults
+            "styles": styles, "head_m": head_m}
     (out / "look.json").write_text(json.dumps(look, default=_json, indent=1))
 
     golden = export_inline(a.db, **ARGS)

@@ -41,10 +41,17 @@ def main(argv=None):
     ap.add_argument("b")
     ap.add_argument("--tol", type=float, default=1e-9)
     ap.add_argument("--skip", default="", help="top-level keys to leave out, comma separated")
+    ap.add_argument("--only", default="", help="dotted paths to compare, comma separated (e.g. layers,sources.roads)")
     ap.add_argument("--max", type=int, default=20)
     x = ap.parse_args(argv)
     skip = set(filter(None, x.skip.split(",")))
     docs = [{k: v for k, v in json.load(open(f)).items() if k not in skip} for f in (x.a, x.b)]
+    if x.only:
+        def pick(d, path):
+            for k in path.split("."):
+                d = d.get(k) if isinstance(d, dict) else None
+            return d
+        docs = [{p: pick(d, p) for p in x.only.split(",")} for d in docs]
     d = diff(*docs, tol=x.tol, limit=x.max)
     if not d:
         print("equal")
