@@ -54,11 +54,14 @@ export function mount(map, RM, H) {
     MM = {tadj, out, span: Math.max(D.n, D.mm.nodes) + 2};
   }
   // pts: null (from the node sNode to the node tNode) or {S, T: Map(k -> candidate)}, the start and end
-  // candidates on walking roads, v the walking speed (route_multimodal_points)
-  function routeMulti(sNode, tNode, allowed, pts, v) {
+  // candidates on walking roads, v the walking speed (route_multimodal_points). weight "length"
+  // (Shortest): the search adds metres, not seconds; a change of mode is 0.1 m (no change that is not shorter)
+  function routeMulti(sNode, tNode, allowed, pts, v, weight) {
     const {tadj, out, span} = MM, END = -1;
     const key = (kind, m, id, p) => ((kind * 8 + m) * span + id) * 3 + p;
     const cost = (m, k) => { const g = G[D.modes[m]]; return g.cost[g.pos.get(k)]; };
+    const byLen = weight === "length", wt = byLen ? (m, k) => D.len[k] : cost;
+    const acc = (dm) => byLen ? dm : dm / v, trW = (c) => byLen ? 0.1 : c;   // a walk off the road; a change of mode
     const dist = new Map(), prev = new Map(), state = new Map(), h = new Heap();
     const push = (d, s, from, step) => {
       const kk = s ? key(...s) : END;
@@ -67,10 +70,10 @@ export function mount(map, RM, H) {
     let direct = null;                               // a trip that starts and ends on one road, forwards
     if (!pts) push(0, [1, hub, sNode, 0], null, null);
     else for (const s of pts.S) {
-      const c = cost(hub, s.k), ac = s.d / v;
-      push(ac + (1 - s.f) * c, [0, hub, s.k, 0], null, {k: s.k, m: hub, c: (1 - s.f) * c, part: [s.f, 1], ac, cand: [s]});
+      const c = cost(hub, s.k), w = wt(hub, s.k), ac = s.d / v;
+      push(acc(s.d) + (1 - s.f) * w, [0, hub, s.k, 0], null, {k: s.k, m: hub, c: (1 - s.f) * c, part: [s.f, 1], ac, cand: [s]});
       const t = pts.T.get(s.k);
-      if (t && s.f <= t.f) { const tot = ac + (t.f - s.f) * c + t.d / v;
+      if (t && s.f <= t.f) { const tot = acc(s.d) + (t.f - s.f) * w + acc(t.d);
         if (!direct || tot < direct.tot) direct = {tot, steps: [{k: s.k, m: hub, c: (t.f - s.f) * c, part: [s.f, t.f], ac: ac + t.d / v, cand: [s, t]}]}; }
     }
     let goal = null;
@@ -80,10 +83,10 @@ export function mount(map, RM, H) {
       const s = state.get(kk), [kind, m, id, p] = s, node = kind === 0 ? D.tgt[id] : id;
       if (!pts && node === tNode && m === hub) { goal = kk; break; }
       const onto = (k) => {                           // take the road k; maybe stop part-way along it
-        const c = cost(m, k);
-        push(d + c, [0, m, k, p], kk, {k, m, c, part: [0, 1], ac: 0});
+        const c = cost(m, k), w = wt(m, k);
+        push(d + w, [0, m, k, p], kk, {k, m, c, part: [0, 1], ac: 0});
         const t = pts && m === hub && pts.T.get(k);
-        if (t) push(d + t.f * c + t.d / v, null, kk, {k, m, c: t.f * c, part: [0, t.f], ac: t.d / v, cand: [t]});
+        if (t) push(d + t.f * w + acc(t.d), null, kk, {k, m, c: t.f * c, part: [0, t.f], ac: t.d / v, cand: [t]});
       };
       if (kind === 0) { const g = G[D.modes[m]]; for (const k of g.next[g.pos.get(id)]) onto(k); }
       else for (const k of out.get(m + ":" + node) || []) onto(k);
@@ -92,7 +95,7 @@ export function mount(map, RM, H) {
         let np = p;
         if (m === hub && tm !== hub) { if (p !== 0) continue; np = 1; }
         else if (m !== hub && tm === hub) { if (p !== 1) continue; np = 2; }
-        push(d + c, [1, tm, node, np], kk, {tr: true, c});
+        push(d + trW(c), [1, tm, node, np], kk, {tr: true, c});
       }
     }
     let steps;
@@ -242,8 +245,8 @@ export function mount(map, RM, H) {
 
   // ---- walk + drive between two points, as route_multimodal_points: the trip starts and ends
   // walking, on the roads within the radius, with a direct walk when both points are on one road
-  function routeMultiPts(S, T, allowed, v) {
-    const r = routeMulti(null, null, allowed, {S, T: new Map(T.map((t) => [t.k, t]))}, v);
+  function routeMultiPts(S, T, allowed, v, weight) {
+    const r = routeMulti(null, null, allowed, {S, T: new Map(T.map((t) => [t.k, t]))}, v, weight);
     if (!r) return null;
     r.start = r.ends[0]; r.end = r.ends[r.ends.length - 1];
     r.len += r.start.d + r.end.d;
@@ -428,7 +431,6 @@ export function mount(map, RM, H) {
 
   function update() {
     const modes = ticked(), multi = modes.length > 1;
-    $("rm-weight").classList.toggle("off", multi);
     $("rm-note").textContent = multi ? "Walk + drive: the car can be taken at any junction (60 s per change)." : NO_MM;
     if (!markers.A || !markers.B) return;
     const ok = inMode(multi ? "walking" : modes[0]), at = (m) => [m.getLngLat().lng, m.getLngLat().lat];
@@ -441,9 +443,8 @@ export function mount(map, RM, H) {
         "move the pin or raise the off-road distance.</div>";
       window.rmLast = {modes, error: "no road"}; paint(null); return;
     }
-    const v = speed();
-    const res = multi ? routeMultiPts(S, T, new Set(modes.map((m) => D.modes.indexOf(m))), v)
-      : routePts(modes[0], S, T, document.querySelector('input[name="rm-w"]:checked').value, v);
+    const v = speed(), w = document.querySelector('input[name="rm-w"]:checked').value;
+    const res = multi ? routeMultiPts(S, T, new Set(modes.map((m) => D.modes.indexOf(m))), v, w) : routePts(modes[0], S, T, w, v);
     window.rmLast = {modes, res};                         // for tests and scripts
     show(res, multi);
   }

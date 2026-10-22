@@ -15,7 +15,6 @@
 #rm-panel code{font-size:12px}
 #rm-mode,#rm-weight input{position:absolute;opacity:0;pointer-events:none;width:0;height:0}
 .rm-seg{display:flex;gap:2px;padding:3px;background:var(--card);border-radius:10px;transition:opacity .15s}
-.rm-seg.off{opacity:.45}
 .rm-seg button{flex:1;border:0;background:none;padding:7px 6px;border-radius:8px;font:inherit;font-size:13px;color:var(--mute);
   cursor:pointer;white-space:nowrap}
 .rm-seg button.rm-wide{flex:1.7}

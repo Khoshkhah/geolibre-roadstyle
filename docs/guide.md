@@ -50,6 +50,7 @@ The plugin does not copy the panel by hand: `tools/make_planner.py` makes `plann
 
 **Using it**
 - **Drag the two pins** (A start, B end). The route changes at once. Choose **Walk, Cycle, Drive, Walk + drive**, and **Fastest** or **Shortest**.
+- **Walk + drive** starts and ends with a walk, and each change between walking and driving adds 60 s. So it takes more time than **Drive** for the same two pins. With **Shortest** it finds the trip with the fewest metres. That trip can have long walks and take much more time.
 - The summary shows the time and the length, with a bar for each leg. A click on a step zooms the map to it. A click on a road keeps its `edge_id` in the panel.
 - The route is a row **route** in the Layers panel: switch it off there.
 - **Back to the normal map:** close the panel (the × in its header). The pins and the route go, and the map stays as it was. **roadstyle › Route planner** opens the panel again, and the route comes back. **Remove roadstyle layers** removes the whole map.

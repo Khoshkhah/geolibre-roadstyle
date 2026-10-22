@@ -80,6 +80,11 @@ def main(db, out=None):
         pg.wait_for_timeout(1500)
         drawn = pg.evaluate("() => window.__rs.map.getLayer('rm-route') ? window.__rs.map.queryRenderedFeatures({layers: ['rm-route']}).length : 0")
         print("route planner:", pl, "| route pieces drawn:", drawn)
+        wd = pg.evaluate("""() => { const s = document.getElementById('rm-mode'), i = [...s.options].findIndex((o) => o.textContent === 'Walk + drive');
+            if (i < 0) return null; s.value = String(i); s.dispatchEvent(new Event('change'));
+            const f = window.rmLast.res; document.querySelector('#rm-weight button[data-w=length]').click(); const g = window.rmLast.res;
+            return {fastest: [Math.round(f.time), Math.round(f.len)], shortest: [Math.round(g.time), Math.round(g.len)]}; }""")
+        print("walk + drive (s, m):", wd)                          # Shortest: shorter; Fastest: faster
         if out:
             Path(out).mkdir(parents=True, exist_ok=True)
             pg.screenshot(path=str(Path(out) / "rust_preview.png"))
