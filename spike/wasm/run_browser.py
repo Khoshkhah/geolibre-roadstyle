@@ -36,7 +36,7 @@ def run(runs):
         for name in ("index.html", "worker.js"):
             os.symlink(HERE / name, Path(tmp) / name)
         os.symlink(PKG, Path(tmp) / "pkg")
-        for name in ("roads.parquet", "look.json", "layers.json"):
+        for name in ("roads.parquet", "look.json"):
             os.symlink(DATA / name, Path(tmp) / name)
 
         class Quiet(http.server.SimpleHTTPRequestHandler):
@@ -83,15 +83,18 @@ def main(argv=None):
         print(f"Pyodide, the same stages (first map): {same:.2f} s; Pyodide start + packages: {py['pyodide_start_s'] + py['packages_s']:.1f} s")
     # the reference: the style Pyodide makes (what the plugin draws today), else the native one; see compare_pieces.py for the knife edge
     ref = DATA / "golden_pyodide.json" if (DATA / "golden_pyodide.json").exists() else DATA / "golden.json"
-    c = subprocess.run([sys.executable, str(SPIKE / "compare.py"), str(ref), str(made), "--only", "layers,sources.roads", "--tol", "0"],
+    c = subprocess.run([sys.executable, str(SPIKE / "compare.py"), str(ref), str(made), "--only", "sources.roads", "--tol", "0"],
                        capture_output=True, text=True)
-    print(f"layers and roads against {ref.name} (tolerance 0):", c.stdout.strip())
+    print(f"roads against {ref.name} (tolerance 0):", c.stdout.strip())
+    lc = subprocess.run([sys.executable, str(SPIKE / "compare.py"), str(DATA / "layers" / "all" / "golden.json"), str(made), "--only", "layers",
+                         "--tol", "0"], capture_output=True, text=True)
+    print("layers against layers/all/golden.json (tolerance 0):", lc.stdout.strip())
     d = subprocess.run([sys.executable, str(SPIKE / "compare_pieces.py"), str(ref), str(made)], capture_output=True, text=True)
     print(f"simple against {ref.name}, per edge:", d.stdout.strip())
     s = subprocess.run([sys.executable, str(SPIKE / "compare.py"), str(DATA / "golden_slots.json"), str(made), "--only", "sources.slots",
                         "--tol", "1e-6"], capture_output=True, text=True)
     print("slots against golden_slots.json (native, tolerance 1e-6: one rounding step):", s.stdout.strip())
-    return c.returncode or d.returncode or s.returncode
+    return c.returncode or lc.returncode or d.returncode or s.returncode
 
 
 if __name__ == "__main__":

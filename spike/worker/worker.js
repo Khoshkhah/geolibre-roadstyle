@@ -1,7 +1,7 @@
 // Step 1 of the full port (docs/design/rust-spike.md): the map of a duckOSM file with no Python. duckdb-wasm reads the file and writes the
-// roads table (roads_sql.js), the Rust module (pkg/, the spike crate) makes the style from it. The look and the layers still come from Python
-// at build time (look.json, layers.json).
-// Message in: {db: ArrayBuffer, look: string, layers: string}. Out: {style, parquet, times} or {error}.
+// roads table (roads_sql.js), the Rust module (pkg/, the spike crate) makes the style from it, its road layers too (step 2). The look still
+// comes from Python at build time (look.json).
+// Message in: {db: ArrayBuffer, look: string}. Out: {style, parquet, times} or {error}.
 import init, {makeStyle} from "./pkg/roadstyle_spike.js";
 import {writeRoads} from "./roads_sql.js";
 
@@ -34,7 +34,7 @@ onmessage = async ({data}) => {
     await timed(times, "roadsSql", writeRoads(q, "m"));
     const parquet = await timed(times, "copy", db.copyFileToBuffer("roads.parquet"));
     const t = performance.now();
-    const style = makeStyle(parquet, data.look, data.layers);
+    const style = makeStyle(parquet, data.look);
     times.rust = Math.round(performance.now() - t);
     times.total = Math.round(performance.now() - t0);
     await conn.close();

@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: step 1 of the full port (the worker) is done; step 2 (the layers in Rust) is started (2026-10-22).
+Status: steps 1 (the worker) and 2 (the road layers in Rust) of the full port are done (2026-10-22). Step 3 (the base-map layers) is next.
 
 ## Question
 
@@ -520,3 +520,28 @@ lists. They cover: tunnels or none, twin pairs, reverse pairs drawn as one line,
   labels, then the seven passes.
 
 The goldens of step 2 are made with the roadstyle fix branch on `PYTHONPATH` (a `git archive` of `fix/short-road-one-cut`), as the rest of `spike/data/`.
+
+## Full port, step 2: result (2026-10-22)
+
+**The Rust module makes the road layers itself.** `spike/rust/src/layers.rs` (about 750 lines) ports, for simple mode with stored levels and inline data:
+
+- the road tables (`_load_road_model`) and the expression builders (`_gwidth`, `_width_expr`, `_offset_match`, `_offset_expr`, `_pair_width`, `_plus_px`,
+  `_by_feature`, `class_order`, `_sort_key`, `_seam_filter`, `_simple_cap`, `_simple_dasharray`, `_simple_color` with the glow of lean mode, the tunnel colours,
+  `class_width_px`, `_label_px`, `_label_size_expr`, `_label_readable_filter`);
+- the five layers (`roads-simple`, the invisible `roads-fill`, `roads-arrows`, `roads-labels`, `roads-highlight`);
+- the passes, in Python's order: the reverse-pair filter, `_drop_empty_layers` with its three-valued evaluator (`_ev`), the fill-opacity switch,
+  `_state_expressions`, `_tunnel_look`, `_bake_state`, the export's arrow rework, and the group tag (`_tag_groups`).
+
+**Check.** For each of the 12 subsets (8 different layer lists), the layers equal the golden ones with tolerance 0
+(`test_rust_layers_equal_golden_for_every_subset`; 7 tests in all). The worker in Chromium makes the whole style with no `layers.json`:
+the layers equal `layers/all/golden.json` with tolerance 0, and the sources equal theirs as before.
+
+`makeStyle` now takes `(parquet, look)`. `layers.json` is gone from the fixture, the harnesses and the worker. The Parquet reader also reads a column that is
+null in every row (Arrow's `Null` type: a subset can have one).
+
+**Time.** Natively the layers take about 55 ms. The first version copied every feature's properties and the three feature lists (about 42 MB) and took
+0.4 to 0.5 s; borrowing them fixed it. In Chromium the worker takes 2.7 s from the file to the style (duckdb-wasm start 0.49 s, attach 0.04 s, the roads
+SQL 0.61 to 0.64 s, Rust 1.47 s), the page has it after 2.9 to 3.0 s. The wasm module is 0.83 MB with gzip.
+
+**What is still from Python** at build time: `look.json` (the resolved look). The base-map layers (step 3), the planner data (step 4) and the 3D decks
+(step 5) are not in the worker yet.

@@ -98,9 +98,6 @@ def main(argv=None):
     golden = export_inline(a.db, **ARGS)
     (out / "golden.json").write_text(json.dumps(golden, separators=(",", ":"), default=_json))
 
-    # the layers as Python makes them for this data: they depend on the look and on a few flags of the data (tunnels, twin pairs,
-    # dash values, reverse pairs, ...; docs/design/rust-spike.md, S1), so the spike takes them from here
-    (out / "layers.json").write_text(json.dumps(golden["layers"], separators=(",", ":"), default=_json))
 
     # S6: the names and arrows, with the same arguments but arrows and labels on: the slots source and the two layers that read it
     # (the roads and simple sources do not change with them)

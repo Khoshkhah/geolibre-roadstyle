@@ -1,5 +1,5 @@
 // Spike S4 (docs/design/rust-spike.md): the Rust style in a module worker, as the plugin's py/worker.js runs Pyodide.
-// Message in: {parquet: ArrayBuffer, look: string, layers: string, runs: number}. Out: the times and the style of the last run.
+// Message in: {parquet: ArrayBuffer, look: string, runs: number}. Out: the times and the style of the last run.
 import init, {makeStyle} from "./pkg/roadstyle_spike.js";
 
 onmessage = async ({data}) => {
@@ -11,7 +11,7 @@ onmessage = async ({data}) => {
     let style = null;
     for (let i = 0; i < data.runs; i++) {
       const t = performance.now();
-      style = makeStyle(new Uint8Array(data.parquet), data.look, data.layers);
+      style = makeStyle(new Uint8Array(data.parquet), data.look);
       runs.push(performance.now() - t);
     }
     const t = performance.now();

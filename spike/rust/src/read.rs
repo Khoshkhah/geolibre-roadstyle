@@ -40,6 +40,7 @@ fn value(col: &ArrayRef, r: usize) -> Result<Value, String> {
         return Ok(Value::Null);
     }
     Ok(match col.data_type() {
+        DataType::Null => Value::Null, // a column that is null in every row (pyarrow writes it so)
         DataType::Utf8 => col.as_string::<i32>().value(r).into(),
         DataType::LargeUtf8 => col.as_string::<i64>().value(r).into(),
         DataType::Utf8View => col.as_string_view().value(r).into(),

@@ -36,8 +36,12 @@ def test_rust_style_equals_golden(tmp_path):
     exe = here / "rust" / "target" / "release" / "roadstyle-spike"
     subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
     out = tmp_path / "made.json"
-    subprocess.run([str(exe), *(str(data / f) for f in ("look.json", "layers.json", "roads.parquet")), str(out)], check=True)
-    r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden.json"), str(out), "--only", "layers,sources.roads,sources.simple",
+    subprocess.run([str(exe), str(data / "look.json"), str(data / "roads.parquet"), str(out)], check=True)
+    r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "golden.json"), str(out), "--only", "sources.roads,sources.simple",
+                        "--tol", "0"], capture_output=True, text=True)
+    assert r.stdout.strip() == "equal", r.stdout
+    # step 2: the road layers, made in Rust, against the golden of all the roads with arrows and labels
+    r = subprocess.run([sys.executable, str(here / "compare.py"), str(data / "layers" / "all" / "golden.json"), str(out), "--only", "layers",
                         "--tol", "0"], capture_output=True, text=True)
     assert r.stdout.strip() == "equal", r.stdout
     # S6: the names and arrows (the slots), against the export with arrows and labels on
@@ -46,20 +50,20 @@ def test_rust_style_equals_golden(tmp_path):
     assert r.stdout.strip() == "equal", r.stdout
 
 
-def test_rust_layer_builders_equal_golden():
-    """Full port step 2, the first builders: the width, offset and sort expressions the Rust crate makes equal the ones in the golden layers
-    (spike/data/layers, tools/make_layer_goldens.py): with twin pairs (all) and without (first100)."""
-    here, data = Path(__file__).parent, Path(__file__).parent / "data"
-    if not (data / "layers" / "all" / "golden.json").exists() or shutil.which("cargo") is None:
+def test_rust_layers_equal_golden_for_every_subset():
+    """Full port step 2: the road layers the Rust crate makes for each of the 12 subsets (spike/data/layers, tools/make_layer_goldens.py: tunnels,
+    twin pairs, reverse pairs, dash values, no one-way slot, no name) equal their golden layers with tolerance 0."""
+    here, data = Path(__file__).parent, Path(__file__).parent / "data" / "layers"
+    if not data.exists() or shutil.which("cargo") is None:
         return
     subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
-    x = json.loads(subprocess.run([str(here / "rust" / "target" / "release" / "roadstyle-spike"), "--exprs", str(data / "look.json")],
-                                  capture_output=True, text=True, check=True).stdout)
-    a, f = ({lyr["id"]: lyr for lyr in json.loads((data / "layers" / s / "golden.json").read_text())["layers"]} for s in ("all", "first100"))
-    assert diff(a["roads-fill"]["paint"]["line-width"], x["fw"], tol=0) == []
-    assert diff(a["roads-fill"]["paint"]["line-offset"], x["off_pairs"], tol=0) == []
-    assert diff(a["roads-arrows"]["layout"]["symbol-sort-key"], ["*", -1, x["sort"]], tol=0) == []
-    assert diff(f["roads-fill"]["paint"]["line-offset"], x["off"], tol=0) == []
+    exe = here / "rust" / "target" / "release" / "roadstyle-spike"
+    subsets = sorted(p for p in data.iterdir() if (p / "golden.json").exists())
+    assert len(subsets) == 12
+    for d in subsets:
+        made = json.loads(subprocess.run([str(exe), "--layers", str(here / "data" / "look.json"), str(d / "roads.parquet")],
+                                         capture_output=True, text=True, check=True).stdout)
+        assert diff(json.loads((d / "golden.json").read_text()), made, tol=0) == [], d.name
 
 
 def test_compare_pieces_finds_a_real_change(tmp_path):

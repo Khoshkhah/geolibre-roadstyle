@@ -7,11 +7,10 @@
   const w = new Worker("worker.js", {type: "module"});
   w.onerror = (e) => { window.__result = {error: "worker: " + (e.message || "could not start")}; };
   w.onmessage = ({data}) => { window.__result = {...data, pageMs: performance.now() - t0, receivedAt: performance.now()}; };
-  const [parquet, look, layers] = await Promise.all([
+  const [parquet, look] = await Promise.all([
     fetch("roads.parquet").then((r) => r.arrayBuffer()),
     fetch("look.json").then((r) => r.text()),
-    fetch("layers.json").then((r) => r.text()),
   ]);
-  w.postMessage({parquet, look, layers, runs: Number(new URLSearchParams(location.search).get("runs") || 3)}, [parquet]);
+  w.postMessage({parquet, look, runs: Number(new URLSearchParams(location.search).get("runs") || 3)}, [parquet]);
 </script>
 <p>making the style…</p>
