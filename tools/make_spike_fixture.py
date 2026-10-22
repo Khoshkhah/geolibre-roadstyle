@@ -50,6 +50,31 @@ def _class_styles(palette, config):
     return {"classes": {c: res(s) for c, s in table.items()}, "fallback": res(table.get(FALLBACK) or next(iter(table.values())))}
 
 
+def features_parquet(db, specs, path):
+    """The base-map tables of mapstyle.map.load_layers as one Parquet file, as the worker writes it (spike/worker/features_sql.js, the same SQL):
+    a row per feature with the layer's index in layers.yaml (``spec``), its name (``layer``, or the one it is merged into), ``osm_id``, ``kind``,
+    ``name``, ``bearing``, the tags of a building's height (``levels``, ``height``) and the geometry as WKB, in the order load_layers reads them."""
+    import duckdb
+    con = duckdb.connect()
+    con.execute(f"ATTACH '{Path(db).resolve()}' AS m (READ_ONLY); USE m")
+    have = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables WHERE table_catalog = 'm' AND table_schema = 'features'").fetchall()}
+    parts = []
+    for i, s in enumerate(specs):
+        if not s.get("show", True) or s["table"] not in have:
+            continue
+        tags = "tags['building:levels'][1], tags['height'][1]" if s.get("height") else "NULL, NULL"
+        sql = (f"SELECT {i} AS spec, '{s.get('merge_into') or s['name']}' AS layer, rowid AS rid, CAST(osm_id AS VARCHAR) AS osm_id, kind, "
+               f"COALESCE(name, '') AS name, {'CAST(bearing AS DOUBLE)' if s.get('bearing') else 'CAST(NULL AS DOUBLE)'} AS bearing, "
+               f"CAST({tags.split(', ')[0]} AS VARCHAR) AS levels, CAST({tags.split(', ')[1]} AS VARCHAR) AS height, ST_AsWKB(geom) AS geometry "
+               f"FROM features.{s['table']} WHERE geom IS NOT NULL" + (f" AND ({s['where']})" if s.get("where") else ""))
+        try:
+            con.execute(f"CREATE TEMP TABLE f{i} AS {sql}")
+            parts.append(f"SELECT * FROM f{i}")
+        except duckdb.Error:
+            continue                                  # load_layers skips a layer whose query fails
+    con.execute(f"COPY ({' UNION ALL '.join(parts)} ORDER BY spec, rid) TO '{Path(path).resolve()}' (FORMAT parquet)")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("db", nargs="?", default=str(HERE.parent / "duckOSM" / "monaco.duckdb"))
@@ -88,11 +113,14 @@ def main(argv=None):
         roads_model = _settings.roads()        # step 2 of the full port: the road tables the layer builders read (render_web._load_road_model)
     finally:
         rs.use_settings(*prev)
+    from mapstyle.style import load_style
     look = {"palette": got["palette"], "settings": settings,
             "args": {k: v for k, v in kw.items() if k != "overlays"},      # name, tooltip, level columns, ... (the overlays are the base map)
             "theme": theme, "config": config,
             # what the Rust code reads (S2): the class styles as the styler resolves them, and the render's defaults
-            "styles": styles, "head_m": head_m, "slots": slots_look, "roads_model": roads_model}
+            "styles": styles, "head_m": head_m, "slots": slots_look, "roads_model": roads_model,
+            # step 3 of the full port: the base-map layers (mapstyle's styles/layers.yaml and the 3D heights of load_layers)
+            "features": {"layers_yaml": load_style("layers"), "buildings_3d": load_style()["features"]["buildings_3d"]}}
     (out / "look.json").write_text(json.dumps(look, default=_json, indent=1))
 
     golden = export_inline(a.db, **ARGS)
@@ -104,6 +132,11 @@ def main(argv=None):
     full = export_inline(a.db, **{**ARGS, "arrows": True, "labels": True})
     (out / "golden_slots.json").write_text(json.dumps({"layers": [x for x in full["layers"] if x.get("source") == "slots"],
                                                        "sources": {"slots": full["sources"]["slots"]}}, separators=(",", ":"), default=_json))
+
+    # step 3 of the full port: the whole map (with the base-map layers), and the base-map tables as the worker's SQL reads them
+    full = export_inline(a.db, **{**ARGS, "layers": True, "arrows": True, "labels": True})
+    (out / "golden_full.json").write_text(json.dumps(full, separators=(",", ":"), default=_json))
+    features_parquet(a.db, look["features"]["layers_yaml"]["layers"], out / "features.parquet")
 
     (out / "versions.txt").write_text(
         f"roadstyle {version('roadstyle')} {Path(rs.__file__).parent}\n"

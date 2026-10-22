@@ -35,6 +35,30 @@ pub fn read_roads(data: Vec<u8>, geom_col: &str) -> Result<Vec<Feature>, String>
     Ok(out)
 }
 
+/// Any Parquet table as rows: the columns as properties, the binary column `blob` kept as its bytes.
+pub fn read_table(data: Vec<u8>, blob: &str) -> Result<Vec<(Map<String, Value>, Option<Vec<u8>>)>, String> {
+    let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(data))
+        .and_then(|b| b.build())
+        .map_err(|e| format!("not a Parquet file: {e}"))?;
+    let mut out = Vec::new();
+    for batch in reader {
+        let batch = batch.map_err(|e| e.to_string())?;
+        let schema = batch.schema();
+        let start = out.len();
+        out.extend((0..batch.num_rows()).map(|_| (Map::new(), None)));
+        for (field, col) in schema.fields().iter().zip(batch.columns()) {
+            for (r, row) in out[start..].iter_mut().enumerate() {
+                if field.name() == blob {
+                    row.1 = binary(col, r).map(<[u8]>::to_vec);
+                } else {
+                    row.0.insert(field.name().clone(), value(col, r)?);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn value(col: &ArrayRef, r: usize) -> Result<Value, String> {
     if col.is_null(r) {
         return Ok(Value::Null);

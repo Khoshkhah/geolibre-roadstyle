@@ -66,6 +66,24 @@ def test_rust_layers_equal_golden_for_every_subset():
         assert diff(json.loads((d / "golden.json").read_text()), made, tol=0) == [], d.name
 
 
+def test_rust_base_map_sources_equal_golden():
+    """Full port step 3, part 1: the base-map feature collections the Rust crate makes from features.parquet (the worker's SQL) equal the
+    golden style's ov<i> sources: the properties with tolerance 0, the coordinates within 1e-12 (a centroid summed in another order). The street
+    of a crossing or a signal (edge_id, __rs_*) comes in part 2 and is left out here."""
+    here, data = Path(__file__).parent, Path(__file__).parent / "data"
+    if not (data / "features.parquet").exists() or shutil.which("cargo") is None:
+        return
+    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
+    fcs = json.loads(subprocess.run([str(here / "rust" / "target" / "release" / "roadstyle-spike"), "--features", str(data / "look.json"),
+                                     str(data / "features.parquet")], capture_output=True, text=True, check=True).stdout)
+    golden = json.loads((data / "golden_full.json").read_text())["sources"]
+    strip = lambda fs: [{"properties": {k: v for k, v in f["properties"].items() if k != "edge_id" and not k.startswith("__rs_")},  # noqa: E731
+                         "geometry": f["geometry"]} for f in fs]
+    assert len(fcs) == len([k for k in golden if k.startswith("ov")]) == 14
+    for i, (name, fc) in enumerate(fcs.items()):
+        assert diff(strip(golden[f"ov{i}"]["data"]["features"]), strip(fc["features"]), tol=1e-12) == [], name
+
+
 def test_compare_pieces_finds_a_real_change(tmp_path):
     """compare_pieces.py forgives the short-road knife edge and one rounding step, and nothing else."""
     g = Path(__file__).parent / "data" / "golden.json"

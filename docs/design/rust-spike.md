@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: steps 1 (the worker) and 2 (the road layers in Rust) of the full port are done (2026-10-22). Step 3 (the base-map layers) is next.
+Status: steps 1 and 2 of the full port are done; step 3 (the base-map layers) is started (2026-10-22).
 
 ## Question
 
@@ -545,3 +545,45 @@ SQL 0.61 to 0.64 s, Rust 1.47 s), the page has it after 2.9 to 3.0 s. The wasm m
 
 **What is still from Python** at build time: `look.json` (the resolved look). The base-map layers (step 3), the planner data (step 4) and the 3D decks
 (step 5) are not in the worker yet.
+
+## Full port, step 3: the base-map layers, plan (2026-10-22)
+
+**Goal.** The worker makes the base map too: the `features.*` tables of the duckOSM file as GeoJSON sources and their layers, as
+`mapstyle.export.export_inline` makes them. With it, the style is the whole map except the planner data (step 4) and the 3D bridge decks (step 5).
+
+**What it is** (Monaco, `spike/data/golden_full.json`: `export_inline(db, view_3d=False)`, 48.6 MB): 14 base-map sources (2,435 features: an ocean
+MultiPolygon, landcover, water, waterways, buildings, railways, parking, platforms, and points: parking signs, traffic signals, crossings, bus and train
+stations, bicycle) and 55 layers. The crossings and traffic signals sit on a street: their layers are made once per fill number (8 numbers here) and go
+between the road layer and the arrows, so a point is drawn at its street's height.
+
+| Part | Python | In the port |
+|---|---|---|
+| The tables | `mapstyle.map.load_layers`: one query per layer of `styles/layers.yaml` (the table, a `where`, the columns, `ST_Centroid` for some, `ST_Area` to sort the polygons largest first, `ST_AsGeoJSON`), the 3D height of a building (`building_height`) | The queries in the worker (JavaScript, as `roads_sql.js`), with `ST_AsWKB`: DuckDB 1.5's core has no `ST_Area`, `ST_Centroid` or `ST_AsGeoJSON` (checked; Pyodide uses shapely for them today). Rust makes the GeoJSON, the area and the centroid (GEOS's algorithm) from the WKB |
+| On the street | `mapstyle.map.edge_attach`: the street a crossing or signal stands on (STRtree, `dwithin` 1 m, then 3 m, then the nearest road; the street drawn on top wins) | Rust, with the R-tree of S6 |
+| The overlays | `feature_overlays` (colours, outlines, opacities, zoom ranges, interaction, which layers start hidden) | The look data at build time: `layers.yaml`, the `features` style, the pattern PNGs and icon SVGs as data URLs (`roadstyle:images`) |
+| The layers | roadstyle `_overlay_layers`, `_build_overlays`, `_edge_overlay` (the street's `__rs_edge`, `__rs_fl`, ... on each point), the placement (under the roads, over them, between the road layer and the arrows), the overlay colours in `_state_expressions` and `_tunnel_look`, `_tag_groups` (the layer's group is its overlay's label) | Rust, next to the road layers of step 2 |
+| The restyle | mapstyle `_restyle`: colour and outline by kind, dashes, textures, icons, 3D buildings (`fill-extrusion`, placed under the arrows), zoom ranges | Rust |
+
+**Checks.** 1. Each base-map source equals `golden_full.json`'s: the properties with tolerance 0, the coordinates within 1e-12 (a centroid computed
+in another order of sums). 2. The 55 layers equal the golden ones with tolerance 0. 3. The worker in Chromium, as in steps 1 and 2.
+
+**Order.** 1. The queries and the GeoJSON, area, centroid and height, checked source by source (the point layers on a street without their
+`edge_id`). 2. `edge_attach`. 3. The overlays and their layers, the placement and the restyle.
+
+## Full port, step 3: progress (2026-10-22)
+
+**Part 1 done: the base-map features.** The fixture writes `spike/data/features.parquet` with the SQL the worker will run (one row per feature: the layer's
+index in `layers.yaml`, the layer's name or the one it is merged into, `osm_id`, `kind`, `name`, `bearing`, the height tags, the geometry as WKB, in
+`rowid` order, as `load_layers` reads them) and `golden_full.json` (the whole map). In Rust:
+
+- `spike/rust/src/geom.rs`: a WKB reader for points, lines, polygons and their multi forms; GeoJSON; GEOS's area (`Area::ofRing`) and centroid (the
+  area-weighted triangles from the area base point; then the lines; then the points).
+- `spike/rust/src/features.rs`: `load_layers` (the props, `building_height`, the centroid of a `centroid` layer, the merged layers, the polygons largest
+  first with a stable sort).
+
+Against `golden_full.json`, the 14 base-map sources: 13 are equal with tolerance 0 (all polygons in the same order, all heights); `parking_p` (the
+centroids of the parking areas) differs in the last bit of a few coordinates and is equal within 1e-12. The golden file uses DuckDB spatial's
+`ST_Centroid`; the plugin today uses shapely's. `test_rust_base_map_sources_equal_golden` checks it (8 tests in all).
+
+**Next:** the worker's SQL for the features (`features_sql.js`, the same statements as the fixture's `features_parquet`), `edge_attach`, then the
+overlays and their layers, the placement and mapstyle's `_restyle`.

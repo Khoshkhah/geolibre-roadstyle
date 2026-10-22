@@ -24,6 +24,13 @@ fn features(source: &Value) -> &[Value] {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.len() == 4 && args[1] == "--features" {
+        // step 3 check: the base-map feature collections from the worker's features.parquet, as {name: FeatureCollection}
+        let data = fs::read(&args[3]).unwrap_or_else(|e| fail(format!("{}: {e}", args[3])));
+        let fcs = roadstyle_spike::features::feature_collections(data, &json_file(&args[2])).unwrap_or_else(|e| fail(e));
+        println!("{}", serde_json::to_string(&fcs).unwrap());
+        return;
+    }
     let layers_only = args.len() == 4 && args[1] == "--layers";
     if !layers_only && args.len() != 4 {
         fail("usage: roadstyle-spike <look.json> <roads.parquet> <out.json>  |  roadstyle-spike --layers <look.json> <roads.parquet>".into());
