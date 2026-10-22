@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: S0 to S4 are done, and condition 1 of the decision (the knife edge) is fixed on a roadstyle branch (2026-10-22).
+Status: S0 to S4 and S6 are done; conditions 1 (the knife edge, on a roadstyle branch) and 2 (the names and arrows) are met. Condition 3 (the input) is open (2026-10-22).
 
 ## Question
 
@@ -306,3 +306,74 @@ Since the fix, `spike/compare.py --tol 2e-7` is enough for the browser outputs. 
 
 **Note on the fixture.** `spike/data/` is now made with the roadstyle branch, not the installed 0.24.2. Until a release has the fix, make it with
 `PYTHONPATH=<the roadstyle branch>/src`.
+
+## S6: the names and arrows (condition 2), plan (2026-10-22)
+
+**Question.** Can `_annotation_slots` (render_web.py, about 190 lines) be ported to Rust with the same slots, and how fast is it? It is the largest stage
+in the browser (5.8 s of the 12.5 s first map in Pyodide). If the slots cannot be made the same, the full port stops here.
+
+**What it makes (Monaco).** The source `slots`: 2,245 slots in 1,450 chains, each a LineString with `slot`, `chain`, `rank`, `name`, `highway`, `oneway`,
+`lvl`, `fl`, `__rs_edge`, `__rs_edge2`, `__rs_tunnel`; then the export adds `__rs_arw` (the number of an arrow slot in its one-way chain) and
+`_mark_cls` adds `__rs_cls`. The layers `roads-arrows` and `roads-labels` read it. With names and arrows on, the `roads` and `simple` sources do not change.
+
+**The two halves of the function.**
+
+| Part | What it does | Exact in Rust? |
+|---|---|---|
+| Graph | one representative per two-way pair; groups by name, level, one-way, class, fill number and tunnel; chains through degree-2 nodes, one-way chains only forward; the chain number | Yes: the same keys (`round(x, 6)`) and the same order (Python's dict order is insertion order) |
+| Geometry | the crossing roads of each chain (shapely STRtree, `intersection`, `project`), the free stretches between them, the slots (`slot_m` long, rounded to 6 decimals), the edge under each slot's middle (`STRtree.nearest`) | No: GEOS computes intersection points and projections with its own arithmetic. Rust agrees to a tolerance. The 6-decimal rounding (about 11 cm) hides most of it, but a rounding step or a slot-count threshold (`length % slot_m > 0.3 * slot_m`, `b - a < 0.2 * slot_m`) can flip |
+
+**Pass rule.**
+1. Every chain has the same slots in the same order, with the same properties, on at least 99 % of the chains; every difference is explained (a rounding step, or a threshold within 1 mm of its limit).
+2. Slot coordinates within 1e-6 deg (one rounding step of 6 decimals, about 11 cm).
+3. In wasm, the slots take less than 1 s for Monaco (Pyodide: 5.8 s).
+
+**One new crate.** The cargo cache has `rstar` 0.12.2 (an R-tree, pure Rust, builds for wasm), not `geo`. `rstar` replaces STRtree; segment intersection,
+point projection and point-to-line distance are written by hand, a few dozen lines each. This also keeps the wasm module small.
+
+**Steps.**
+
+| Step | Work | Check |
+|---|---|---|
+| S6.0 | Fixture: `golden_slots.json` (export with names and arrows on); the slot look data in `look.json` (class widths at zoom 20, the `z_order` table, `slot_m`) | Python gives the same slots twice |
+| S6.1 | Graph: representatives, groups, chains, chain numbers | The set of (chain, name, highway, oneway, lvl, fl) equals the golden one |
+| S6.2 | Geometry: R-tree index, crossings, free stretches, slots, nearest edge, `__rs_arw`, `__rs_cls` | The pass rule above, with a per-chain compare script |
+| S6.3 | Time natively and in wasm (the S4 harness) | Pass rule 3 |
+
+## Result of S6: the names and arrows (2026-10-22)
+
+**The slots in Rust equal Python's exactly.** All 2,245 slots of Monaco, in 1,450 chains: the same order, the same properties (`slot`, `chain`, `rank`,
+`name`, `highway`, `oneway`, `lvl`, `fl`, `__rs_edge`, `__rs_edge2`, `__rs_tunnel`, `__rs_arw`, `__rs_cls`) and the same coordinates, with tolerance 0,
+natively and in wasm. `spike/test_compare.py` checks it (6 tests).
+
+What `spike/rust/src/slots.rs` ports (about 400 lines): the representatives of the two-way pairs, the groups in Python's dict order (`indexmap`), the
+chains through degree-2 nodes, the chain numbers, the crossings (an `rstar` R-tree for shapely's STRtree; segment intersection, GEOS's
+`project` and point-to-segment distance by hand), the free stretches, the slots (`slot_m` 100 m; Python's float `divmod`), the nearest edge of each
+slot, the export's `__rs_arw` and `_mark_cls`.
+
+The intersection points are not computed with GEOS's arithmetic, as the plan expected. The slot coordinates are rounded to 6 decimals (about 11 cm), and
+that hid every difference on Monaco: no slot moved by one rounding step. On a larger area, a rare slot can move by one step (pass rule 2 allows it).
+
+| | Rust natively | Rust wasm (Chromium) | Python natively | Pyodide |
+|---|---|---|---|---|
+| The slots | 129 ms | about 0.2 s (1.46 s with the roads and the pieces, first call) | 2.9 s | 5.8 s |
+| Roads + pieces + slots | 0.9 s | **1.46 s** first call, 1.1 s warm | 4.5 s | **10.2 s** |
+
+The wasm module is 3.78 MB, 0.78 MB with gzip.
+
+**Pass rule of S6:** 1. the same slots: yes, all of them. 2. coordinates within 1e-6 deg: yes, equal. 3. under 1 s in wasm: yes, about 0.2 s.
+
+**Condition 2 is met.** The largest stage in the browser ports exactly and is about 25 times faster in wasm than in Pyodide.
+
+## What is left for the full port (2026-10-22)
+
+| Part | State |
+|---|---|
+| Roads, pieces, names and arrows | Done in the spike: exact natively, within one rounding step in the browser |
+| The knife edge of the short roads | Fixed on roadstyle branch `fix/short-road-one-cut` (pushed, no PR) |
+| **The input (condition 3)** | Open: duckdb-wasm in the worker, or a Parquet export from `duckosm`. The next step |
+| The layers | Taken from Python. About 25 builders and the data flags (S1): JSON only, no geometry |
+| Base-map layers, planner data | Not started: mostly SQL and JSON |
+| 3D decks | Not started: a polygon buffer |
+| The levels solver | Stays offline (`duckosm levels`) |
+| The plugin's worker | Not started: `py/worker.js` calls Pyodide; the Rust module goes in its place when all of the above is done |

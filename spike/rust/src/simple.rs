@@ -14,7 +14,7 @@ const PIECES: usize = 24; // the most pieces of one edge (the feature id is edge
 const TIE: f64 = 1e-8; // the line-sort-key's tie-breaker per edge
 const MAX_EDGES: usize = 1_000_000;
 
-type Pt = [f64; 2];
+pub(crate) type Pt = [f64; 2];
 
 struct Piece {
     props: Map<String, Value>,
@@ -27,18 +27,18 @@ fn np_round(x: f64, scale: f64) -> f64 {
 }
 
 /// A line in metres from its first point (as _casing_parts and _halves project it), with its cumulative lengths.
-struct Line {
-    xy: Vec<Pt>,
-    cum: Vec<f64>,
-    lon0: f64,
-    lat0: f64,
-    kx: f64,
+pub(crate) struct Line {
+    pub(crate) xy: Vec<Pt>,
+    pub(crate) cum: Vec<f64>,
+    pub(crate) lon0: f64,
+    pub(crate) lat0: f64,
+    pub(crate) kx: f64,
 }
 
-const KY: f64 = 111320.0;
+pub(crate) const KY: f64 = 111320.0;
 
 impl Line {
-    fn new(c: &[Pt]) -> Line {
+    pub(crate) fn new(c: &[Pt]) -> Line {
         let (lon0, lat0) = (c[0][0], c[0][1]);
         let kx = 111320.0 * lat0.to_radians().cos();
         let xy: Vec<Pt> = c.iter().map(|p| [(p[0] - lon0) * kx, (p[1] - lat0) * KY]).collect();
@@ -52,7 +52,7 @@ impl Line {
         Line { xy, cum, lon0, lat0, kx }
     }
 
-    fn len(&self) -> f64 {
+    pub(crate) fn len(&self) -> f64 {
         self.cum[self.cum.len() - 1]
     }
 
@@ -65,7 +65,7 @@ impl Line {
     }
 
     /// _at: the point at the distance d.
-    fn at(&self, d: f64) -> Pt {
+    pub(crate) fn at(&self, d: f64) -> Pt {
         let j = (self.right(d) as isize - 1).clamp(0, self.cum.len() as isize - 2) as usize;
         let w = self.cum[j + 1] - self.cum[j];
         let t = if w > 0.0 { (d - self.cum[j]) / w } else { 0.0 };
@@ -74,7 +74,7 @@ impl Line {
     }
 
     /// _part: the cut points at a and b and the vertices between them.
-    fn part(&self, a: f64, b: f64) -> Vec<Pt> {
+    pub(crate) fn part(&self, a: f64, b: f64) -> Vec<Pt> {
         let mut out = vec![self.at(a)];
         let (i, j) = (self.right(a), self.left(b));
         if i < j {
@@ -85,7 +85,7 @@ impl Line {
     }
 
     /// Back to lon / lat, rounded as numpy rounds (scale 1e7 or 1e8).
-    fn lonlat(&self, pts: &[Pt], scale: f64) -> Vec<Pt> {
+    pub(crate) fn lonlat(&self, pts: &[Pt], scale: f64) -> Vec<Pt> {
         pts.iter().map(|p| [np_round(p[0] / self.kx + self.lon0, scale), np_round(p[1] / KY + self.lat0, scale)]).collect()
     }
 }

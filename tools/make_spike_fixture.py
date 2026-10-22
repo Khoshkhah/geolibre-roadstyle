@@ -82,13 +82,16 @@ def main(argv=None):
         theme, config = _settings.theme(), dataclasses.asdict(rw.CONFIG)
         styles = _class_styles(got["palette"], rw.CONFIG)
         head_m = inspect.signature(rw.render).parameters["head_m"].default
+        # S6: a slot's rank (the z_order table) and how far a name keeps from a crossing road (its drawn width at zoom 20, _crossing_half_m)
+        slots_look = {"z_order": dict(rw.ROAD_Z), "width_z20": {c: rw.class_width_px(c, 20) for c in rw._CLASSES},
+                      "width_z20_fallback": rw.class_width_px(None, 20)}
     finally:
         rs.use_settings(*prev)
     look = {"palette": got["palette"], "settings": settings,
             "args": {k: v for k, v in kw.items() if k != "overlays"},      # name, tooltip, level columns, ... (the overlays are the base map)
             "theme": theme, "config": config,
             # what the Rust code reads (S2): the class styles as the styler resolves them, and the render's defaults
-            "styles": styles, "head_m": head_m}
+            "styles": styles, "head_m": head_m, "slots": slots_look}
     (out / "look.json").write_text(json.dumps(look, default=_json, indent=1))
 
     golden = export_inline(a.db, **ARGS)
@@ -97,6 +100,12 @@ def main(argv=None):
     # the layers as Python makes them for this data: they depend on the look and on a few flags of the data (tunnels, twin pairs,
     # dash values, reverse pairs, ...; docs/design/rust-spike.md, S1), so the spike takes them from here
     (out / "layers.json").write_text(json.dumps(golden["layers"], separators=(",", ":"), default=_json))
+
+    # S6: the names and arrows, with the same arguments but arrows and labels on: the slots source and the two layers that read it
+    # (the roads and simple sources do not change with them)
+    full = export_inline(a.db, **{**ARGS, "arrows": True, "labels": True})
+    (out / "golden_slots.json").write_text(json.dumps({"layers": [x for x in full["layers"] if x.get("source") == "slots"],
+                                                       "sources": {"slots": full["sources"]["slots"]}}, separators=(",", ":"), default=_json))
 
     (out / "versions.txt").write_text(
         f"roadstyle {version('roadstyle')} {Path(rs.__file__).parent}\n"

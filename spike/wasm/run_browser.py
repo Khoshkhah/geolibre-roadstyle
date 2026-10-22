@@ -88,7 +88,10 @@ def main(argv=None):
     print(f"layers and roads against {ref.name} (tolerance 0):", c.stdout.strip())
     d = subprocess.run([sys.executable, str(SPIKE / "compare_pieces.py"), str(ref), str(made)], capture_output=True, text=True)
     print(f"simple against {ref.name}, per edge:", d.stdout.strip())
-    return c.returncode or d.returncode
+    s = subprocess.run([sys.executable, str(SPIKE / "compare.py"), str(DATA / "golden_slots.json"), str(made), "--only", "sources.slots",
+                        "--tol", "1e-6"], capture_output=True, text=True)
+    print("slots against golden_slots.json (native, tolerance 1e-6: one rounding step):", s.stdout.strip())
+    return c.returncode or d.returncode or s.returncode
 
 
 if __name__ == "__main__":
