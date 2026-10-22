@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-<h1 align="center">roadstyle for GeoLibre</h1>
+<h1 align="center">roadstyle plugin for GeoLibre</h1>
 
 <p align="center">
   Roads in <a href="https://github.com/Khoshkhah/roadstyle">roadstyle</a>'s look, from a <a href="https://github.com/Khoshkhah/duckOSM">duckOSM</a> database, in <a href="https://web.geolibre.app">GeoLibre</a>.<br>
