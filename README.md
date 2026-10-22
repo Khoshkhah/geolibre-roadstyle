@@ -1,10 +1,12 @@
 <p align="center">
-  <img src="docs/img/roadstyle.svg" alt="roadstyle" height="64">
+  <a href="https://github.com/Khoshkhah/roadstyle"><img src="docs/img/roadstyle.svg" alt="roadstyle" height="64"></a>
   &nbsp;&nbsp;
-  <picture>
+  <a href="https://github.com/Khoshkhah/duckOSM"><picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/duckosm-inverse.svg">
     <img src="docs/img/duckosm.svg" alt="duckOSM" height="64">
-  </picture>
+  </picture></a>
+  &nbsp;&nbsp;
+  <a href="https://web.geolibre.app"><img src="docs/img/geolibre.png" alt="GeoLibre" height="64" style="border-radius:14px"></a>
 </p>
 
 <h1 align="center">roadstyle plugin for GeoLibre</h1>
@@ -107,3 +109,5 @@ Change `version` in `plugin.json` and in `index.js` together (a test checks that
 its files: after a change, remove the plugin and install the new `.zip`.
 
 Design: `docs/design/style_export.md` in the [roadstyle repo](https://github.com/Khoshkhah/roadstyle).
+
+The GeoLibre logo is the icon of [GeoLibre](https://github.com/opengeos/geolibre) (MIT license).
