@@ -6,7 +6,7 @@
     <img src="docs/img/duckosm.svg" alt="duckOSM" height="64">
   </picture></a>
   &nbsp;&nbsp;
-  <a href="https://web.geolibre.app"><img src="docs/img/geolibre.png" alt="GeoLibre" height="64" style="border-radius:14px"></a>
+  <a href="https://web.geolibre.app"><img src="docs/img/geolibre.png" alt="GeoLibre" height="64"></a>
 </p>
 
 <h1 align="center">roadstyle plugin for GeoLibre</h1>
