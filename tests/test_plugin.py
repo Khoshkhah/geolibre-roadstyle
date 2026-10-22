@@ -183,29 +183,28 @@ def test_three_folders(host):
     assert host.evaluate("() => rs.groups.map((g) => g.name)") == ["Background (monaco)", "Roads (monaco)", "Features (monaco)"]    # no folder inside a folder
     rows = host.evaluate("() => rs.groups.map((g) => g.ids.map((id) => rs.rows.find((r) => r.id === id).name))")
     assert rows[0] == ["water"] and rows[2] == ["crossings"]
-    assert "roads" in rows[1] and "bridges" in rows[1] and "tertiary" in rows[1] and "crossings" not in rows[1] and "water" not in rows[1]
+    assert "bridges" in rows[1] and "tertiary" in rows[1] and "crossings" not in rows[1] and "water" not in rows[1]
+    assert "all roads" not in rows[1] and "roads" not in rows[1]                       # the folder switches all the roads: no row for them, as Features has none
     order = host.evaluate("() => rs.map.getStyle().layers.map((l) => l.id).filter((i) => /ov0-fill|rs0-roads$|ov5-fill/.test(i))")
     assert order == ["rs0-ov0-fill", "rs0-roads", "rs0-ov5-fill"]                     # draw order: background, roads, features
-    # the roads row is registered after the type rows: GeoLibre lists the last row on top, so the Roads folder starts with the roads
-    names = host.evaluate("() => rs.rows.map((r) => r.name)")
-    assert names.index("roads") > names.index("bridges")
     assert host.errors == []
 
 
 def test_opacity_of_a_row_fades_its_layers(host):
-    """The slider 'Opacity' of GeoLibre (a row's, and a folder's) reaches the layers: the style's own opacity times the value. An opacity that
-    depends on the zoom is scaled in its stops (MapLibre takes a zoom expression only at the top)."""
+    """The slider 'Opacity' of GeoLibre (a row's, and a folder's: it sets every row) reaches the layers: the style's own opacity times the value.
+    A road-type row fades its own roads (a class, bridges, tunnels). An opacity that depends on the zoom is scaled in its stops (MapLibre takes a
+    zoom expression only at the top)."""
     add_style(host)
     host.evaluate("() => { window.__maperr = []; rs.map.on('error', (e) => window.__maperr.push(String(e.error && e.error.message))); }")
-    v = host.evaluate("""() => { const row = rs.rows.find((r) => r.name === 'roads'), m = rs.map;
-        const get = () => [m.getPaintProperty('rs0-roads', 'line-opacity'), m.getPaintProperty('rs0-roads-halo', 'line-opacity')];
-        row.paintBridge.setOpacity(0.5); const half = get();
-        row.paintBridge.setOpacity(0.25); const quarter = get();
-        row.paintBridge.setOpacity(1); const back = get();
-        return {half, quarter, back, errors: window.__maperr}; }""")
-    assert v["half"] == [0.5, ["interpolate", ["linear"], ["zoom"], 14, 0.1, 17, 0.5]]
-    assert v["quarter"] == [0.25, ["interpolate", ["linear"], ["zoom"], 14, 0.05, 17, 0.25]]
-    assert v["back"] == [1, ["interpolate", ["linear"], ["zoom"], 14, 0.2, 17, 1]]      # the style's own values again
+    v = host.evaluate("""() => { const rows = rs.rows.filter((r) => r.metadata.group === 'road type'), m = rs.map;
+        const get = () => JSON.stringify([m.getPaintProperty('rs0-roads', 'line-opacity'), m.getPaintProperty('rs0-roads-halo', 'line-opacity')]);
+        const one = rows.find((r) => r.name === 'tertiary'); one.paintBridge.setOpacity(0.5); const oneRow = get();
+        rows.forEach((r) => r.paintBridge.setOpacity(0.25)); const folder = get();
+        rows.forEach((r) => r.paintBridge.setOpacity(1)); const back = get();
+        return {oneRow, folder, back, errors: window.__maperr}; }""")
+    assert '"match"' in v["oneRow"] and '"tertiary",0.5' in v["oneRow"] and '"residential"' not in v["oneRow"]       # only its own class
+    assert '"residential",0.25' in v["folder"] and '"tertiary",0.25' in v["folder"] and '"footway",0.25' in v["folder"] and "0.25" in v["folder"]
+    assert v["back"] == '[1,["interpolate",["linear"],["zoom"],14,0.2,17,1]]'                  # the style's own values again
     assert v["errors"] == [] and host.errors == []
 
 
@@ -240,6 +239,13 @@ def test_road_type_rows_filter_the_roads(host):
     assert host.evaluate("() => rs.map.getFilter('rs0-roads')") in (None, [])         # no filter again, as the style had it
     toggle(host, "bridges", False)                                                    # the bridge road goes, and its deck
     assert "Bro" not in rendered(host)
+    toggle(host, "bridges", True)
+    for name in type_rows(host):                                                      # the folder's check box sets every row: all the roads go
+        toggle(host, name, False)
+    assert rendered(host) == []
+    for name in type_rows(host):
+        toggle(host, name, True)
+    assert len(rendered(host)) == 3
     assert host.errors == []
 
 
@@ -260,7 +266,7 @@ def test_database_dialog_has_the_colour_choices(host):
     assert labels[0].startswith("duckOSM database") and "Colours" in labels and "Footpaths and cycleways" in labels
     assert host.eval_on_selector_all("[role=dialog] select:nth-of-type(1) option", "(os) => os.map((o) => o.value)")
     themes = host.evaluate("() => [...document.querySelectorAll('[role=dialog] select')].map((s) => [...s.options].map((o) => o.value))")
-    assert themes[1] == ["osm", "google", "grey"] and themes[3] == ["off", "on"] and themes[4] == ["off", "on"] and len(themes) == 5
+    assert themes[1] == ["osm", "google", "grey", "roadstyle"] and themes[3] == ["off", "on"] and themes[4] == ["off", "on"] and len(themes) == 5
     host.keyboard.press("Escape")
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'redraw').onSelect()")       # nothing to redraw yet: a message
     host.wait_for_selector(".rs-pl-toast")

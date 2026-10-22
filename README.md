@@ -1,6 +1,6 @@
 # roadstyle for GeoLibre
 
-> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.17.0)
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.18.0)
 >
 > In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**, choose the `.zip`, then **Plugins › Installed › roadstyle**.
 > The same file is in this repo as [`dist/roadstyle-geolibre.zip`](dist/roadstyle-geolibre.zip). All versions: [Releases](https://github.com/Khoshkhah/geolibre-roadstyle/releases).
@@ -14,7 +14,7 @@ The plugin adds the menu **roadstyle**:
 
 | Item | Does |
 |---|---|
-| Open a duckOSM database… | A dialog asks for a `.duckdb` file on your disk and for the colours: the roads in front (all modes, driving, walking, cycling), the theme (OpenStreetMap, Google, Grey), the path style (Google, OpenStreetMap, Komoot, CyclOSM) and whether to show all feature layers (crossings, traffic signals, …; the default) or only those that the mapstyle page shows. roadstyle and mapstyle make the map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`). No server and no export. The first time, it loads Python and the packages (about 30 s). A box shows the progress, and Cancel stops it. |
+| Open a duckOSM database… | A dialog asks for a `.duckdb` file on your disk and for the colours: the roads in front (all modes, driving, walking, cycling), the theme (OpenStreetMap, Google, Grey, roadstyle: the colours of the level editor), the path style (Google, OpenStreetMap, Komoot, CyclOSM) and whether to show all feature layers (crossings, traffic signals, …; the default) or only those that the mapstyle page shows. roadstyle and mapstyle make the map in the browser with their own Python code (Pyodide in a worker, `py/worker.js`). No server and no export. The first time, it loads Python and the packages (about 30 s). A box shows the progress, and Cancel stops it. |
 | Redraw the database with other colours… | Makes the map of the last file again with other choices, and replaces the first map. |
 | Add a roadstyle layer… | Asks for the URL of a roadstyle export (`style.json`, from `rs.export_style`). The link parameter `?roadstyle=<URL>` does the same. |
 | Style a layer with roadstyle… | Puts a roadstyle look (`rs.export_look`) on a GeoLibre data layer that has duckOSM's columns, for example a DuckDB or GeoParquet layer. Without a look URL, it uses `looks/default.json`. GeoLibre's own line of the layer becomes transparent, and Identify still shows the data. |
@@ -26,8 +26,8 @@ which is the draw order:
 | Folder | Rows |
 |---|---|
 | **Features (monaco)**, over the roads | buildings 3D, crossings, traffic signals, bus stations, train stations, parking signs, bicycle |
-| **Roads (monaco)** | roads, then the road types: bridges, tunnels and a row for each highway class in the data (motorway to footway). The check box of a type row hides or shows those roads. |
-| **Background (monaco)**, under the roads | paved (squares, pedestrian areas, piers, helipads), buildings, raceway (the Circuit de Monaco), other ways (pieces that no road network holds), railways, parking, platforms, waterways, water, land cover (with the land of the boundary as its bottom polygon, so no hole shows where OSM has no area) |
+| **Roads (monaco)** | the road types (the folder's check box switches all the roads; there is no row for all of them): bridges, tunnels and a row for each highway class in the data (motorway to footway), then **raceway** (the Circuit de Monaco) and **other_ways** (ways that no road network holds). The check box of a type row hides or shows those roads, and its Opacity slider fades them. A click on a road, a raceway or another way opens its popup. |
+| **Background (monaco)**, under the roads | paved (squares, pedestrian areas, piers, helipads), buildings, railways, parking, platforms, waterways, water, land cover (with the land of the boundary as its bottom polygon, so no hole shows where OSM has no area) |
 
 **The slider "Opacity"** under a folder (GeoLibre's own) fades all the layers of the folder, and the slider of a row fades the layers of that row.
 The plugin multiplies the opacity that the style has (also an opacity that depends on the zoom). The value 1 puts the style's own values back.
@@ -66,8 +66,8 @@ Increase `version` in `plugin.json` and in `index.js` (`VERSION`) with each chan
 
 ## What the plugin needs
 
-- **mapstyle 0.9.0 or later (the layers raceway, other ways and the land background; 0.7.1 has the fixes for the 3D buildings), and roadstyle 0.24.0 or later.** "Open a duckOSM database" calls `mapstyle.export.export_inline`.
-  `py/pkgs.zip` in this repo holds roadstyle 0.24.0 and mapstyle 0.9.0. To refresh it, install newer releases and run
+- **mapstyle 0.10.0 or later (the theme roadstyle; 0.9.0 has the layers raceway, other ways and the land background; 0.7.1 has the fixes for the 3D buildings), and roadstyle 0.24.0 or later.** "Open a duckOSM database" calls `mapstyle.export.export_inline`.
+  `py/pkgs.zip` in this repo holds roadstyle 0.24.0 and mapstyle 0.10.0. To refresh it, install newer releases and run
   `python build.py --files`, then increase the version.
 - **Network.** The worker loads Pyodide from `cdn.jsdelivr.net` and two small packages from PyPI (`folium`, `branca`).
 - **Memory.** The `.duckdb` file is read into memory twice (the browser and the worker). A large file needs a large amount of memory.

@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.17.0";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.18.0";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -170,10 +170,14 @@ function showPopup(m, point, props, title = null) {
   m.getContainer().appendChild(popup);
 }
 
+const ROAD_LIKE = new Set(["raceway", "other_ways"]);       // the groups of mapstyle's layers that are roads but in no road network: in the Roads folder, and selectable
 // the road under the cursor: the roads tile layer of an added export (in simple mode its fill layer is unseen but kept for this)
 function roadAt(m, point) {
   const ids = added.flatMap((a) => a.layerIds).filter((id) => m.getLayer(id) && m.getLayer(id).type === "line");
-  return m.queryRenderedFeatures(point, {layers: ids}).find((f) => f.sourceLayer === "roads" || (!f.sourceLayer && /roads$/.test(f.source))) || null;
+  const hits = m.queryRenderedFeatures(point, {layers: ids});
+  // a road of the networks first; then a raceway or another way that no network holds (layers of their own, from mapstyle 0.9.0): they are roads too
+  return hits.find((f) => f.sourceLayer === "roads" || (!f.sourceLayer && /roads$/.test(f.source)))
+    || hits.find((f) => ROAD_LIKE.has(f.layer && f.layer.metadata && f.layer.metadata["roadstyle:group"])) || null;
 }
 
 // The page's road popup and hover (its popup.css / popup.js and its settings, style metadata roadstyle:interaction): the click
@@ -224,7 +228,7 @@ function onClick(e) {
   setState(m, selected, {select: true});
   closePopup();
   if (f && rsUI && rsUI.inter.popup !== false)
-    popup = makePopup(m, e.lngLat, rsUI.rfields(f.properties, rsUI.inter.popup), {close: true});
+    popup = makePopup(m, e.lngLat, rsUI.rfields(f.properties, "highway" in f.properties ? rsUI.inter.popup : ["name", "kind"]), {close: true});
 }
 function onMove(e) {
   const m = map();
@@ -301,6 +305,15 @@ function roadTypes(style) {            // the classes in the roads' own data; a 
   const classes = [...have].sort((a, b) => (CLASS_ORDER.indexOf(a) < 0 ? 99 : CLASS_ORDER.indexOf(a)) - (CLASS_ORDER.indexOf(b) < 0 ? 99 : CLASS_ORDER.indexOf(b)) || a.localeCompare(b));
   return {classes, bridge: feats.some((f) => f.properties && f.properties.__rs_bridge), tunnel: feats.some((f) => f.properties && f.properties.__rs_tunnel)};
 }
+// The opacity of the roads: each road-type row has a slider, and the folder's slider sets every row. The factor of a road is the one of its class,
+// of "bridges" (a bridge) and of "tunnels" (a tunnel), so a row fades its own roads. 1 for all puts the style's own values back.
+function setRoadOpacity(m, a) {
+  const op = a.op, f = [];
+  if (op.classes.size) f.push(["match", ["coalesce", ["get", "highway"], ""], ...[...op.classes.values()].flat(), 1]);
+  if (op.bridge < 1) f.push(["case", ["to-boolean", ["get", "__rs_bridge"]], op.bridge, 1]);
+  if (op.tunnel < 1) f.push(["case", ["to-boolean", ["get", "__rs_tunnel"]], op.tunnel, 1]);
+  setOpacity(m, a.roadLayers.map((x) => x.id), f.length ? (f.length === 1 ? f[0] : ["*", ...f]) : 1);
+}
 function setRoadFilters(m, a) {
   const h = a.hidden, conds = [];
   if (h.classes.size) conds.push(["!", ["in", ["coalesce", ["get", "highway"], ""], ["literal", [...h.classes]]]]);
@@ -323,7 +336,7 @@ const baseOpacity = new Map();
 // A value times the opacity. MapLibre takes a zoom expression only at the top of the value (an interpolate or a step), so the factor goes into
 // the outputs of its stops; for any other expression the whole expression is multiplied.
 function scaleOpacity(v, o) {
-  if (typeof v === "number") return v * o;
+  if (typeof v === "number") return typeof o === "number" ? v * o : ["*", o, v];
   if (Array.isArray(v) && v[0] === "interpolate" && Array.isArray(v[2]) && v[2][0] === "zoom")
     return v.map((x, i) => (i >= 4 && i % 2 === 0 ? scaleOpacity(x, o) : x));
   if (Array.isArray(v) && v[0] === "step" && Array.isArray(v[1]) && v[1][0] === "zoom")
@@ -386,7 +399,7 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
   });
   const roadsRows = [], featureRows = [], backgroundRows = [], typeRows = [], groupIds = [];
   const roadGroups = ["roads", DECKS];                  // the roads and their decks: the road types filter both
-  const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, imageIds: Object.keys(images).concat(spriteImages), hidden: {classes: new Set(), bridge: false, tunnel: false},
+  const entry = {url, kind, prefix, layerIds, sourceIds, groupIds, imageIds: Object.keys(images).concat(spriteImages), hidden: {classes: new Set(), bridge: false, tunnel: false}, op: {classes: new Map(), bridge: 1, tunnel: 1},
                  roadLayers: style.layers.map((l, i) => ({id: layerIds[i], filter: l.filter || null, g: groupOf(l)}))
                    .filter((x) => roadGroups.includes(x.g))};
   if (app.registerExternalNativeLayer) {
@@ -394,31 +407,34 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
     const registerTypes = () => {
     // the road types: a row for each class, bridges and tunnels (a row with a transparent layer of its own: its check box sets the filters)
     const types = roadTypes(style);
-    const typeRow = (key, name, hide) => {
-      const id = prefix + "type-" + key;
+    // GeoLibre keeps the layers of its rows in the order of the panel, and leaves the layers that no row owns where they were (under the rows it moves).
+    // There is no row for all the roads, so the first road-type row owns the road layers too: its check box only sets filters, so this changes nothing but their place.
+    let anchor = groups.get("roads") || [];
+    const typeRow = (key, name, hide, fade) => {
+      const id = prefix + "type-" + key, own = anchor; anchor = [];
       let shown = true;                                  // GeoLibre calls the bridge once at the start: nothing to do then
       // GeoLibre treats a row as a plugin layer only when it has a MapLibre layer id: a transparent background layer is the row's own
       m.addLayer({id, type: "background", paint: {"background-opacity": 0}});
       layerIds.push(id);
       app.registerExternalNativeLayer({
-        id, name, type: "vector", nativeLayerIds: [id], sourceIds: [], opacity: 1, style: {}, metadata: {url, group: "road type"}, visible: true,
+        id, name, type: "vector", nativeLayerIds: [id, ...own], sourceIds: [], opacity: 1, style: {}, metadata: {url, group: "road type"}, visible: true,
         paintMode: "plugin",
         paintBridge: {setVisibility: (v) => {
           if (v === shown) return;
           shown = v; hide(!v); setRoadFilters(m, entry);
           console.info("roadstyle: road type", name, v ? "shown" : "hidden");
-        }},
+        }, setOpacity: (o) => { fade(o); setRoadOpacity(m, entry); }},
       });
       typeRows.push(id);
     };
     // GeoLibre lists the last row on top: bridges and tunnels, then the classes from motorway to path, so register them the other way round
-    for (const c of types.classes.slice().reverse()) typeRow("c-" + c, c, (h) => entry.hidden.classes[h ? "add" : "delete"](c));
-    if (types.tunnel) typeRow("tunnel", "tunnels", (h) => { entry.hidden.tunnel = h; });
-    if (types.bridge) typeRow("bridge", "bridges", (h) => { entry.hidden.bridge = h; });
+    for (const c of types.classes.slice().reverse()) typeRow("c-" + c, c, (h) => entry.hidden.classes[h ? "add" : "delete"](c), (o) => { if (o >= 1) entry.op.classes.delete(c); else entry.op.classes.set(c, [c, o]); });
+    if (types.tunnel) typeRow("tunnel", "tunnels", (h) => { entry.hidden.tunnel = h; }, (o) => { entry.op.tunnel = o; });
+    if (types.bridge) typeRow("bridge", "bridges", (h) => { entry.hidden.bridge = h; }, (o) => { entry.op.bridge = o; });
     };
 
     [...groups].forEach(([g, ids], i) => {               // GeoLibre lists them with the last one on top, as they are drawn
-      if (g === "roads") registerTypes();                // the road types are registered just before the roads: the Roads folder lists the roads first
+      if (g === "roads") { registerTypes(); return; }    // the road types are the rows of the Roads folder, and there is no row for all roads: the folder switches them all
       const id = prefix + "row" + i, visible = ids.some((x) => m.getLayoutProperty(x, "visibility") !== "none");
       app.registerExternalNativeLayer({
         id, name: g, type: "vector", nativeLayerIds: ids, sourceIds,
@@ -430,7 +446,7 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
       // A GeoLibre folder is drawn at the place of its first row. So the layers that the style draws under the roads (ocean, land
       // cover, water, buildings, railways, parking) go to the folder Background, and the layers over the roads (crossings, signals,
       // stations, 3D buildings) to the folder Features. The decks are drawn over the roads, but they are part of the Roads folder.
-      (roadGroups.includes(g) ? roadsRows : i < roadsAt ? backgroundRows : featureRows).push(id);
+      (roadGroups.includes(g) || ROAD_LIKE.has(g) ? roadsRows : i < roadsAt ? backgroundRows : featureRows).push(id);
     });
     if (app.addLayerGroup) {
       const name = style.name || "map", folder = (title, rows) => {
@@ -613,7 +629,7 @@ const pick = (name, label, values, value) => ({name, label, type: "select", valu
 const dbFields = (file, o) => [
   ...(file ? [{name: "file", label: "duckOSM database (.duckdb)", type: "file", accept: ".duckdb", required: true}] : []),
   pick("mode", "Roads in front", [["all", "All modes"], ["driving", "Driving"], ["walking", "Walking"], ["cycling", "Cycling"]], o.mode),
-  pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"]], o.theme),
+  pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"], ["roadstyle", "roadstyle (the level editor's look)"]], o.theme),
   pick("paths", "Footpaths and cycleways", [["google", "Google (calm lines)"], ["osm", "OpenStreetMap (dotted)"], ["komoot", "Komoot (bold)"], ["cyclosm", "CyclOSM (blue)"]], o.paths),
   pick("ocean", "Ocean polygon (the blue sea)", [["off", "Off: GeoLibre's own map shows the sea"], ["on", "On, as the mapstyle page"]], o.ocean),
   pick("decks", "3D bridge decks", [["off", "Off"], ["on", "On"]], o.decks),

@@ -10,6 +10,7 @@ Needs the network, playwright, duckdb and a few minutes.
     python build.py --zip
     python tests/e2e_geolibre.py /path/to/monaco.duckdb [screenshots-folder]
 """
+import os
 import io
 import sys
 import tempfile
@@ -82,6 +83,8 @@ def main(db, out=None):
         pg.get_by_text("Open a duckOSM database", exact=False).first.click()
         pg.wait_for_selector("[role=dialog] input[type=file]")
         pg.set_input_files("[role=dialog] input[type=file]", str(db))
+        if os.environ.get("RS_THEME"):                        # the colours choice, for example RS_THEME=roadstyle
+            pg.select_option("[role=dialog] select >> nth=1", os.environ["RS_THEME"])
         assert pg.eval_on_selector_all("[role=dialog] select", "(ss) => ss.map((s) => s.value)")[3:] == ["off", "off"]      # the defaults: no ocean polygon, no 3D bridge decks
         pg.click("[role=dialog] button[type=submit]")
         pg.wait_for_selector(".rs-pl-progress", timeout=20000)
@@ -92,6 +95,8 @@ def main(db, out=None):
         arrows = pg.evaluate("""() => { const m = window.__rs.map, id = m.getLayoutProperty('rs0-roads-arrows', 'icon-image'), i = m.getImage(id);
                                         return {id, w: i && i.data.width, sdf: i && i.sdf, base: m.getImage('oneway').data.width}; }""")
         print("arrows:", arrows, "(the base map's own 'oneway' image:", base, "px wide)")
+        print("page errors:", errors[-5:], "| roadstyle said:", said[-8:])
+        print("arrow layers:", pg.evaluate("() => window.__rs.map.getStyle().layers.filter((l) => /arrow/.test(l.id)).map((l) => [l.id, JSON.stringify(l.layout).slice(0, 160)])"))
         assert arrows["id"] == "rs0-oneway" and arrows["sdf"] is True and arrows["w"] != arrows["base"], arrows
 
         # 2) the crossings and the traffic signals show with "Show all"
@@ -135,6 +140,16 @@ def main(db, out=None):
         pg.wait_for_timeout(5000)
         nr = pg.evaluate("(id) => window.__rs.map.queryRenderedFeatures({layers: [id]}).length", rc["id"])
         print("raceway pieces drawn at zoom 17:", nr)
+        probe = pg.evaluate("""() => { const m = window.__rs.map, ids = m.getStyle().layers.filter((l) => /roads-(fill|casing|simple)$/.test(l.id)).map((l) => l.id);
+            return ids.map((id) => [id, m.getLayoutProperty(id, 'visibility'), JSON.stringify(m.getPaintProperty(id, 'line-opacity')).slice(0, 90), m.queryRenderedFeatures({layers: [id]}).length]); }""")
+        print("road layers at the raceway:", probe)
+        pos = pg.evaluate("""() => { const L = window.__rs.map.getStyle().layers, g = (l) => l.metadata && l.metadata['roadstyle:group'];
+            const idx = (n) => L.map((l, i) => g(l) === n ? i : -1).filter((i) => i >= 0);
+            return {landcoverLast: Math.max(...idx('landcover')), buildingsLast: Math.max(...idx('buildings')), roadsFirst: Math.min(...idx('roads')), raceway: idx('raceway')}; }""")
+        print("layer positions:", pos)
+        assert pos["roadsFirst"] > pos["landcoverLast"] and pos["roadsFirst"] > pos["buildingsLast"], pos          # the roads are over the land and the buildings
+        if out:
+            pg.screenshot(path=str(Path(out) / "raceway_zoom17.png"))
         assert nr > 0, "the raceway is not drawn"
         if "buildings 3D" in groups:                                                                        # mapstyle 0.7.0 and later
             assert groups["buildings 3D"]["visible"] == 1, groups
@@ -143,9 +158,9 @@ def main(db, out=None):
         for title in ("Background (monaco)", "Roads (monaco)", "Features (monaco)"):
             assert pg.get_by_text(title, exact=True).count() > 0, title + " is not in the Layers panel"
         assert pg.get_by_text("by type", exact=True).count() == 0, "a folder inside a folder: GeoLibre moves rows out of the folder"
-        ys = {t: pg.get_by_text(t, exact=True).first.bounding_box()["y"] for t in ("Features (monaco)", "Roads (monaco)", "Background (monaco)", "roads", "bridges", "crossings", "water")}
+        ys = {t: pg.get_by_text(t, exact=True).first.bounding_box()["y"] for t in ("Features (monaco)", "Roads (monaco)", "Background (monaco)", "bridges", "crossings", "water")}
         print("panel, from the top:", sorted(ys, key=ys.get))
-        assert ys["Features (monaco)"] < ys["crossings"] < ys["Roads (monaco)"] < ys["roads"] < ys["Background (monaco)"] < ys["water"], ys   # each row in its folder
+        assert ys["Features (monaco)"] < ys["crossings"] < ys["Roads (monaco)"] < ys["bridges"] < ys["Background (monaco)"] < ys["water"], ys   # each row in its folder
         assert ys["Roads (monaco)"] < ys["bridges"] < ys["Background (monaco)"], ys
         # the slider "Opacity" under a folder reaches its layers: GeoLibre calls the setOpacity of every row of the folder. The first folder slider
         # that GeoLibre finds is the one of Features (the folder at the top of the panel): the 3D buildings (0.9) go to 0.9 x 0.4 = 0.36
