@@ -1,6 +1,7 @@
 //! Spike (docs/design/rust-spike.md): the road part of the roadstyle style, from the roads in a GeoParquet file. The same function
 //! runs natively (main.rs) and in the browser (`makeStyle`, the wasm32 build, through wasm-bindgen).
 
+pub mod layers;
 pub mod read;
 pub mod roads;
 pub mod simple;

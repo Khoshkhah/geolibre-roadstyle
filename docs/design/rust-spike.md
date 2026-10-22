@@ -1,6 +1,6 @@
 # Spike: the roads of the style in Rust WebAssembly
 
-Status: the spike is done (S0 to S6, the three conditions). Step 1 of the full port (the worker) is done (2026-10-22). Step 2 (the layers) is next.
+Status: step 1 of the full port (the worker) is done; step 2 (the layers in Rust) is started (2026-10-22).
 
 ## Question
 
@@ -485,3 +485,38 @@ Times in the worker (Chromium, Monaco, two runs; duckdb-wasm from jsdelivr with 
 Today the plugin needs about 18 s for the first open of Monaco (the guide): 6 s to start Python and 10 s to make the map, with the names and arrows 10 s later.
 The worker's 3 s do not yet include the base-map layers, the planner data and the 3D decks (steps 3 to 5), or the layers in Rust (step 2: they come from
 `layers.json` here).
+
+## Full port, step 2: the layers in Rust, plan (2026-10-22)
+
+**Goal.** The Rust module makes the road layers itself, so `layers.json` from Python is no longer needed. The base-map layers (step 3) and the 3D decks
+(step 5) are not in this step.
+
+**What makes the road layers** (roadstyle `render_web.render` with `simple=True` and the level columns, then the export, then mapstyle's export):
+
+| Part | Python | Size |
+|---|---|---|
+| The road tables | `_load_road_model`: widths per group and zoom, growth rates, casing ratios, class groups, links, zoom stops, z order | from the settings |
+| Five layers | `roads-simple`, `roads-fill` (invisible, for clicks), `roads-highlight`, `roads-arrows`, `roads-labels` | the expression builders: `_width_expr`, `_offset_expr`, `_offset_match`, `_pair_width`, `_plus_px`, `_by_feature`, `_simple_color`, `_simple_dasharray`, `_simple_cap`, `_seam_filter`, `_minzoom_filter`, `_sort_key`, `_label_size_expr`, `_label_readable_filter`, the tunnel colours (`_tun_*`, `_fill_expr`, `_gs`, `_painted`): about 25 functions of 5 to 30 lines |
+| Seven passes on the list | the reverse-pair filter; `_drop_empty_layers` with its evaluator (`_ev`, `_keys`, about 70 lines); the fill-opacity switch (`rs_fill_on`); `_state_expressions`; `_tunnel_look`; `_bake_state`; the export's arrow filter and placement | about 200 lines |
+| Two export steps | roadstyle `_tag_groups` (`roadstyle:group`), mapstyle `_restyle` (no base-map layers here: only its metadata) | small |
+
+**The data flags.** Golden layers for 12 subsets of the Monaco roads (`tools/make_layer_goldens.py`, `spike/data/layers/<subset>/`) give 8 different layer
+lists. They cover: tunnels or none, twin pairs, reverse pairs drawn as one line, the two dash values, one or none, no one-way slot (no arrow layer:
+`_drop_empty_layers` removes it) and no name (no name layer).
+
+**Check.** For each subset, the layers the Rust module makes from that subset's `roads.parquet` equal its `golden.json` with tolerance 0. Then the worker
+(step 1) runs without `layers.json`.
+
+**Order.** 1. The road tables in `look.json` (`_settings.roads()`) and the width, offset and sort builders, checked on the `roads-fill` and
+`roads-highlight` layers of `all`. 2. `roads-simple`. 3. Arrows and labels. 4. The passes, subset by subset until all 12 are equal.
+
+## Full port, step 2: progress (2026-10-22)
+
+- `look.json` has the road tables (`roads_model`: `_settings.roads()`), and `tools/make_layer_goldens.py` writes the 12 subsets (`spike/data/layers/`).
+- `spike/rust/src/layers.rs` ports the road tables (`_load_road_model`), `_gwidth`, `_width_expr`, `_offset_match`, `_offset_expr`, `class_order` and
+  `_sort_key`. Against the golden layers, with tolerance 0: `roads-fill`'s line width and line offset (with twin pairs in `all`, without in `first100`),
+  `roads-highlight`'s line width and the arrows' sort key are equal. `test_rust_layer_builders_equal_golden` checks it (7 tests in all).
+- Next: `roads-simple` (`_by_feature`, `_plus_px`, `_pair_width`, `_simple_color`, `_simple_dasharray`, `_simple_cap`, `_seam_filter`), then the arrows and
+  labels, then the seven passes.
+
+The goldens of step 2 are made with the roadstyle fix branch on `PYTHONPATH` (a `git archive` of `fix/short-road-one-cut`), as the rest of `spike/data/`.

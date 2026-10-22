@@ -19,6 +19,13 @@ fn json_file(path: &str) -> Value {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.len() == 3 && args[1] == "--exprs" {
+        // step 2 check: the builders on their own, for tools that compare them with the golden layers
+        let m = roadstyle_spike::layers::Model::from_look(&json_file(&args[2])).unwrap_or_else(|e| fail(e));
+        println!("{}", json!({"fw": m.width_expr("highway", false, 1.0), "cw": m.width_expr("highway", true, 1.0),
+                              "off": m.offset_expr("highway", false), "off_pairs": m.offset_expr("highway", true), "sort": m.sort_key("highway")}));
+        return;
+    }
     if args.len() != 5 {
         fail("usage: roadstyle-spike <look.json> <layers.json> <roads.parquet> <out.json>".into());
     }

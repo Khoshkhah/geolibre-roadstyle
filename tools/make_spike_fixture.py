@@ -85,13 +85,14 @@ def main(argv=None):
         # S6: a slot's rank (the z_order table) and how far a name keeps from a crossing road (its drawn width at zoom 20, _crossing_half_m)
         slots_look = {"z_order": dict(rw.ROAD_Z), "width_z20": {c: rw.class_width_px(c, 20) for c in rw._CLASSES},
                       "width_z20_fallback": rw.class_width_px(None, 20)}
+        roads_model = _settings.roads()        # step 2 of the full port: the road tables the layer builders read (render_web._load_road_model)
     finally:
         rs.use_settings(*prev)
     look = {"palette": got["palette"], "settings": settings,
             "args": {k: v for k, v in kw.items() if k != "overlays"},      # name, tooltip, level columns, ... (the overlays are the base map)
             "theme": theme, "config": config,
             # what the Rust code reads (S2): the class styles as the styler resolves them, and the render's defaults
-            "styles": styles, "head_m": head_m, "slots": slots_look}
+            "styles": styles, "head_m": head_m, "slots": slots_look, "roads_model": roads_model}
     (out / "look.json").write_text(json.dumps(look, default=_json, indent=1))
 
     golden = export_inline(a.db, **ARGS)

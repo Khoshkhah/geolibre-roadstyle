@@ -46,6 +46,22 @@ def test_rust_style_equals_golden(tmp_path):
     assert r.stdout.strip() == "equal", r.stdout
 
 
+def test_rust_layer_builders_equal_golden():
+    """Full port step 2, the first builders: the width, offset and sort expressions the Rust crate makes equal the ones in the golden layers
+    (spike/data/layers, tools/make_layer_goldens.py): with twin pairs (all) and without (first100)."""
+    here, data = Path(__file__).parent, Path(__file__).parent / "data"
+    if not (data / "layers" / "all" / "golden.json").exists() or shutil.which("cargo") is None:
+        return
+    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
+    x = json.loads(subprocess.run([str(here / "rust" / "target" / "release" / "roadstyle-spike"), "--exprs", str(data / "look.json")],
+                                  capture_output=True, text=True, check=True).stdout)
+    a, f = ({lyr["id"]: lyr for lyr in json.loads((data / "layers" / s / "golden.json").read_text())["layers"]} for s in ("all", "first100"))
+    assert diff(a["roads-fill"]["paint"]["line-width"], x["fw"], tol=0) == []
+    assert diff(a["roads-fill"]["paint"]["line-offset"], x["off_pairs"], tol=0) == []
+    assert diff(a["roads-arrows"]["layout"]["symbol-sort-key"], ["*", -1, x["sort"]], tol=0) == []
+    assert diff(f["roads-fill"]["paint"]["line-offset"], x["off"], tol=0) == []
+
+
 def test_compare_pieces_finds_a_real_change(tmp_path):
     """compare_pieces.py forgives the short-road knife edge and one rounding step, and nothing else."""
     g = Path(__file__).parent / "data" / "golden.json"
