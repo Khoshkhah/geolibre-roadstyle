@@ -110,4 +110,4 @@ its files: after a change, remove the plugin and install the new `.zip`.
 
 Design: `docs/design/style_export.md` in the [roadstyle repo](https://github.com/Khoshkhah/roadstyle).
 
-The GeoLibre logo is the icon of [GeoLibre](https://github.com/opengeos/geolibre) (MIT license).
+The GeoLibre logo is the icon [docs/assets/geolibre-icon.png](https://github.com/opengeos/GeoLibre/blob/9cf193094e6575bfd152ec020345a8e69b75290c/docs/assets/geolibre-icon.png) of [GeoLibre](https://github.com/opengeos/geolibre) (MIT license).
