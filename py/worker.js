@@ -1,7 +1,7 @@
 // roadstyle and mapstyle in the browser (Pyodide), for the roadstyle GeoLibre plugin (roadstyle › Open a duckOSM database): the map
 // of a duckOSM .duckdb made by their own Python code (mapstyle.export.export_inline), so it is the page's map. A module worker: a
 // large WebAssembly file (DuckDB) cannot be compiled on the page's main thread, and GeoLibre stays responsive.
-// Messages in: {db: ArrayBuffer, name, opts: {mode, theme, paths}, pkgs: ArrayBuffer (roadstyle + mapstyle, until {ready} came back)}; out: {step}, {ready}, {style: JSON}, {error}.
+// Messages in: {warm: true, pkgs} (only start Python), or {db: ArrayBuffer, name, opts: {mode, theme, paths}, pkgs: ArrayBuffer (roadstyle + mapstyle, until {ready} came back)}; out: {step}, {ready}, {style: JSON}, {error}.
 
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";   // Python 3.14, DuckDB 1.5.1 (checked 2026-10-20)
 const PACKAGES = ["numpy", "pandas", "shapely", "pyproj", "geopandas", "pyyaml", "duckdb", "scipy", "jinja2", "requests", "xyzservices", "pillow"];
@@ -20,13 +20,17 @@ async function start(pkgs) {
   py = p;                                   // set only when everything loaded: a failed start is tried again from the start
 }
 
-onmessage = async ({data}) => {
+let queue = Promise.resolve();               // one message at a time: a warm-up and a map message may come close together
+onmessage = ({data}) => { queue = queue.then(() => handle(data)); };
+
+async function handle(data) {
   try {
     if (!py) {
       postMessage({step: "loading Python, roadstyle and mapstyle (the first time about 30 s)"});
       await start(data.pkgs);
     }
     postMessage({ready: true});             // Python is up: the next map needs no packages
+    if (data.warm) return;                  // a warm-up (the plugin sends it when its dialog opens): Python loads while the user chooses the file
     postMessage({step: "making the map of " + data.name});
     py.FS.writeFile("/home/pyodide/db.duckdb", new Uint8Array(data.db));
     py.globals.set("rs_name", data.name);
@@ -47,4 +51,4 @@ json.dumps(export_inline("/home/pyodide/db.duckdb", name=rs_name, **opts), separ
   } catch (e) {
     postMessage({error: String(e && e.message || e).slice(-3000)});
   }
-};
+}

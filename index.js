@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.19.1";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.19.2";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -504,6 +504,10 @@ class PlannerMarker {
 let planner = null;                       // {id, dispose}: the one route planner on the map
 function disposePlanner() {
   if (!planner) return;
+  try { const m = map(); if (m && planner.keep) m.off("styledata", planner.keep); } catch (e) { /* the map is gone */ }
+  if (planner.fs) document.removeEventListener("fullscreenchange", planner.fs);
+  (planner.fsParts || []).forEach((x) => x.remove());
+  if (planner.rowId && app.unregisterExternalNativeLayer) try { app.unregisterExternalNativeLayer(planner.rowId); } catch (e) { /* already gone */ }
   try { planner.mounted && planner.mounted.dispose(); } catch (e) { console.warn("roadstyle: the route planner did not clean up:", e); }
   if (planner.unregister) planner.unregister();
   planner.holder.remove();
@@ -529,8 +533,26 @@ async function setupPlanner(entry, RM, kind) {
   try { planner.mounted = mod.mount(m, RM, H); }
   catch (e) { console.error("roadstyle: the route planner did not start:", e); const msg = String(e && e.message || e); disposePlanner(); return notify("The route planner could not start: " + msg, "error"); }
   entry.planner = true;
+  const TOP = ["rm-radius-fill", "rm-radius-line", "rm-route-casing", "rm-route", "rm-access"];
+  planner.keep = () => {                             // GeoLibre can move layers or load a new base map: the route stays over them, or is drawn again
+    try {
+      if (!m.getSource("rm-route")) planner.mounted.restore();
+      else if (m.getStyle().layers.slice(-TOP.length).map((l) => l.id).join() !== TOP.join()) TOP.forEach((id) => m.getLayer(id) && m.moveLayer(id));
+    } catch (e) { console.warn("roadstyle: the route layers could not be kept on top:", e); }
+  };
+  m.on("styledata", planner.keep);
+  // The route lines are a GeoLibre row of their own ("route"): GeoLibre puts the layers of its rows in order, and a layer that no row owns can end under them.
+  if (app.registerExternalNativeLayer) {
+    planner.rowId = "roadstyle-route";
+    app.registerExternalNativeLayer({
+      id: planner.rowId, name: "route", type: "vector", nativeLayerIds: TOP, sourceIds: [], opacity: 1, style: {}, metadata: {url: entry.url, group: "route"}, visible: true,
+      paintMode: "plugin",
+      paintBridge: {setVisibility: (v) => TOP.forEach((id) => m.getLayer(id) && m.setLayoutProperty(id, "visibility", v ? "visible" : "none"))},
+    });
+  }
   // where the panel goes: GeoLibre's right panel; else a floating panel; else a box of our own over the map (an older GeoLibre has neither call)
-  const panel = {id: planner.id, title: "Route planner", defaultWidth: 380, render: (container) => { container.appendChild(root); return () => { holder.appendChild(root); }; }};
+  const panel = {id: planner.id, title: "Route planner", defaultWidth: 380,
+                 render: (container) => { planner.container = container; container.appendChild(root); return () => { planner.container = null; holder.appendChild(root); }; }};
   let how = null;
   if (app.registerRightPanel && app.openRightPanel) {
     try { planner.unregister = app.registerRightPanel({...panel, dock: "right-of-style"}); planner.open = () => app.openRightPanel(panel.id); how = "right panel"; }
@@ -549,6 +571,26 @@ async function setupPlanner(entry, RM, kind) {
     box.append(bar, root); document.body.appendChild(box);
     planner.unregister = () => box.remove(); planner.open = () => { box.hidden = false; }; how = "box over the map";
   }
+  // Full screen: GeoLibre makes the map element itself full screen, and its side panels are not on the screen. The planner moves into a box over the
+  // map (with a tab that hides and shows it), and moves back when the full screen ends.
+  const fsBox = document.createElement("div"), fsTab = document.createElement("button"), fsBar = document.createElement("div");
+  fsBox.style.cssText = "position:absolute;top:12px;right:12px;bottom:12px;width:380px;max-width:92%;z-index:1500;overflow:auto;background:Canvas;color:CanvasText;border-radius:12px;box-shadow:0 8px 30px #0005";
+  fsBar.style.cssText = "position:sticky;top:0;text-align:right;padding:4px 8px;z-index:1;background:Canvas";
+  fsBar.innerHTML = '<button type="button" aria-label="Hide the route planner" style="border:0;background:none;font-size:20px;cursor:pointer;color:inherit">\u00d7</button>';
+  fsTab.type = "button"; fsTab.textContent = "Route planner"; fsTab.hidden = true;
+  fsTab.style.cssText = "position:absolute;top:12px;right:12px;z-index:1500;padding:6px 12px;border-radius:8px;border:1px solid #8886;background:Canvas;color:CanvasText;cursor:pointer;font:inherit";
+  fsBar.firstChild.onclick = () => { fsBox.hidden = true; fsTab.hidden = false; };
+  fsTab.onclick = () => { fsBox.hidden = false; fsTab.hidden = true; };
+  planner.fs = () => {
+    const fe = document.fullscreenElement;
+    if (fe && fe.contains(m.getContainer()) && !fe.contains(root)) {
+      fsBox.hidden = false; fsTab.hidden = true; fsBox.append(fsBar, root); fe.append(fsBox, fsTab);
+    } else if (!fe && fsBox.isConnected) {
+      fsBox.remove(); fsTab.remove(); (planner.container || holder).appendChild(root);
+    }
+  };
+  document.addEventListener("fullscreenchange", planner.fs);
+  planner.fsParts = [fsBox, fsTab];
   console.info("roadstyle: the route planner is in the " + how);
   planner.open();
   // the panel narrows the map: after it has opened, the map shows the route from the start to the end (the page opens on the whole area, where the route is)
@@ -694,21 +736,52 @@ function stopWorker() {
   pyWorker = null; pyReady = false;
 }
 // one map at a time; Cancel stops the worker (the next map starts a new one)
+async function ensureWorker() {
+  if (!pyWorker)                                     // a worker from a blob: GeoLibre's page cannot start one from another address
+    pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
+  return pyWorker;
+}
+// Python (Pyodide and its packages) takes the first 10 to 30 seconds: it starts when the dialog opens, while the user chooses the file.
+async function warmUp() {
+  if (pyReady || pyWorker) return;
+  try {
+    const w = await ensureWorker();
+    w.onmessage = ({data}) => { if (data.ready) pyReady = true; };
+    w.onerror = () => stopWorker();
+    w.postMessage({warm: true, pkgs: await (await fetch(asset("py/pkgs.zip"))).arrayBuffer()});
+  } catch (e) { console.warn("roadstyle: the warm-up failed:", e); stopWorker(); }
+}
+// The style of a database that was opened before (the same file, the same choices) comes from the browser's own storage: no Python needed.
+const IDB = {
+  open: () => new Promise((ok, no) => { const r = indexedDB.open("roadstyle-cache", 1); r.onupgradeneeded = () => r.result.createObjectStore("styles"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }),
+  async get(k) { const db = await this.open(); return new Promise((ok) => { const q = db.transaction("styles").objectStore("styles").get(k); q.onsuccess = () => ok(q.result && q.result.style); q.onerror = () => ok(undefined); }); },
+  async put(k, style) {
+    const db = await this.open();
+    const all = await new Promise((ok) => { const q = db.transaction("styles").objectStore("styles").openCursor(), rows = []; q.onsuccess = () => { const c = q.result; if (c) { rows.push([c.key, c.value.t]); c.continue(); } else ok(rows); }; q.onerror = () => ok([]); });
+    return new Promise((ok) => {
+      const t = db.transaction("styles", "readwrite"), st = t.objectStore("styles");
+      all.sort((a, b) => b[1] - a[1]).slice(2).forEach(([key]) => st.delete(key));                 // keep the last three
+      st.put({t: Date.now(), style}, k);
+      t.oncomplete = () => ok(true); t.onerror = t.onabort = () => ok(false);
+    });
+  },
+};
 function makeStyle(file, box, opts) {
   return new Promise(async (done, fail_) => {
     working = {cancel: () => { stopWorker(); fail_(new Error("cancelled")); }};      // Cancel works from the first moment
     try {
-      const first = !pyWorker;
-      if (first)                                     // a worker from a blob: GeoLibre's page cannot start one from another address
-        pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
-      const w = pyWorker, msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, ""),
+      const key = [VERSION, file.name, file.size, file.lastModified, opts.mode, opts.theme, opts.paths, opts.planner !== "off"].join("|");
+      const cached = await IDB.get(key).catch(() => undefined);
+      if (cached) { box.say("the map from the browser's storage"); return done(cached); }
+      if (!pyReady) box.say("loading Python, roadstyle and mapstyle (the first time about 30 s)");
+      const w = await ensureWorker(), msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, ""),
                                  opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths, planner: opts.planner !== "off"}};
       if (!pyReady) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();     // until the worker said it is ready
       w.onmessage = ({data}) => {
         if (data.step) box.say(data.step);
         else if (data.ready) pyReady = true;
         else if (data.error) { if (!pyReady) stopWorker(); fail_(new Error("the map of " + file.name + " failed: " + data.error)); }
-        else done(data.style);
+        else { IDB.put(key, data.style).catch(() => false); done(data.style); }       // kept for the next time (not a problem if the storage is full)
       };
       w.onerror = (e) => { stopWorker(); fail_(new Error("the Python worker failed: " + (e.message || "it could not start"))); };
       w.postMessage(msg, [msg.db, ...(msg.pkgs ? [msg.pkgs] : [])]);
@@ -747,6 +820,7 @@ async function runDatabase(file, opts) {
 
 async function openDatabase() {
   if (working) return notify("A map is being made: wait for it, or cancel it.", "warn");
+  warmUp();                                          // Python starts now, while the dialog is open
   const r = await ask("Open a duckOSM database", dbFields(true, lastDb ? lastDb.opts : DB_DEFAULTS), "Open");
   if (r) await runDatabase(r.file, r);
 }

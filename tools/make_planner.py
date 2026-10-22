@@ -52,6 +52,12 @@ def main(path=None):
     body = once(body, "ps = rsGetProps(ks.map((k) => fid[k]));", "ps = H.roadProps(ks.map((k) => fid[k]));")
     body = once(body, "rsColor(null);", "H.recolor(null);")
     body = once(body, "new maplibregl.Marker(", "new H.Marker(")
+    body = once(body, """for (const l of res.legs) l.edges.forEach((k, i) => lines.push({type: "Feature", properties: {color: COLORS[l.mode]},
+      geometry: {type: "LineString", coordinates: cut(GEO[k], l.parts[i][0], l.parts[i][1])}}));""",
+                """for (const l of res.legs) l.edges.forEach((k, i) => {
+      if (!GEO[k]) return console.warn("roadstyle: a road of the route has no line on the map (edge_id " + D.eid[k] + ")");     // one bad road must not hide the route
+      lines.push({type: "Feature", properties: {color: COLORS[l.mode]}, geometry: {type: "LineString", coordinates: cut(GEO[k], l.parts[i][0], l.parts[i][1])}});
+    });""")
     body = once(body, 'document.addEventListener("rs:select", (e) => {', 'document.addEventListener("rs:select", (e) => {\n      if (!alive) return;')
     body = "\n  let alive = true;" + body
     body = re.sub(r"\n  \(function wait\(\) \{.*?\n  \}\)\(\);\s*$", "\n  init();\n", body, flags=re.S)
@@ -60,6 +66,7 @@ def main(path=None):
     body += '''
   return {
     route: (a, b) => window.rmRoute(a, b),
+    restore() { drawLayers(); drawRadius(); if (window.rmLast && window.rmLast.res) paint(window.rmLast.res); },     // a new base map took the layers away
     dispose() {                                                    // the markers, the route layers and the panel's listeners go
       for (const k of ["A", "B"]) if (markers[k]) { markers[k].remove(); markers[k] = null; }
       for (const id of ["rm-radius-fill", "rm-radius-line", "rm-route-casing", "rm-route", "rm-access"]) if (map.getLayer(id)) map.removeLayer(id);

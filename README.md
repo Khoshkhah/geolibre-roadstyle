@@ -22,7 +22,7 @@
 The plugin draws roads with casings, bridges, tunnels and one-way arrows, with 3D buildings and base-map layers, over GeoLibre's own map. The map
 is made in the browser from a duckOSM database or a style file. No server is needed.
 
-> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.19.1)
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.19.2)
 >
 > 1. In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**. Choose the `.zip`.
 > 2. **Plugins › Installed › roadstyle** makes the plugin active.
@@ -32,7 +32,7 @@ is made in the browser from a duckOSM database or a style file. No server is nee
 
 1. Download the finished database: [monaco.duckdb](https://github.com/Khoshkhah/duckOSM/releases/download/v0.6.0/monaco.duckdb) (38 MB).
 2. Menu **roadstyle › Open a duckOSM database…**. Choose the file, then **Open**.
-3. The first time takes about 30 seconds (the plugin loads Python in the browser). Then the map of Monaco is on the screen.
+3. The first time takes about 30 seconds (the plugin loads Python in the browser; it starts while you choose the file). Then the map of Monaco is on the screen. The next time you open the same file with the same choices, the map comes from the browser's storage and takes about 4 seconds.
 
 ## Input data
 
@@ -74,6 +74,8 @@ The plugin has the route planner of [duckOSM](https://github.com/Khoshkhah/duckO
 - **Walk, Cycle, Drive, Walk + drive**, and **Fastest** or **Shortest**.
 - The summary shows the time and the length, with a bar for each leg. The steps are turn by turn: a click on a step zooms the map to it.
 - Click a road to keep its `edge_id` in the panel.
+- The route is a row **route** in the Layers panel: switch it off there.
+- In **full screen** the panel is a box over the map (the tab "Route planner" hides and shows it), and it goes back to the side panel when you leave full screen.
 - The menu item **roadstyle › Route planner** opens the panel again. **Remove roadstyle layers** closes it.
 
 The graphs are in the page, so the planner works for areas up to 150,000 roads. A bigger database opens without it. For a style file, make it with

@@ -104,8 +104,24 @@ def main(db, out=None):
             pins: document.querySelectorAll('.rm-mk').length, steps: (window.rmSteps || []).length, route: !!(window.rmLast && window.rmLast.res)})""")
         print("route planner:", pl)
         assert pl["panel"] == "roadstyle-planner" and pl["dom"] and pl["pins"] == 2 and pl["steps"] > 0 and pl["route"], pl
+        pg.wait_for_timeout(2000)
+        drawn = pg.evaluate("() => window.__rs.map.queryRenderedFeatures({layers: ['rm-route']}).length")
+        print("route line pieces drawn on the screen:", drawn, "| rows:", pg.evaluate("() => window.__rs.app.listLayers().map((l) => l.name).filter((n) => n === 'route').length"), "route row")
+        assert drawn > 0, "the route is not drawn on the map"
         if out:
             pg.screenshot(path=str(Path(out) / "route_planner.png"))
+        # GeoLibre can move layers, or load a new base map (it removes the layers it does not own): the route stays on top, or is drawn again
+        pg.evaluate("() => { const m = window.__rs.map; m.moveLayer('rm-route', m.getStyle().layers[0].id); }")        # the route under every layer
+        pg.wait_for_timeout(1500)
+        top = pg.evaluate("() => window.__rs.map.getStyle().layers.slice(-5).map((l) => l.id).join()")
+        print("after moving the route to the bottom, the last layers:", top)
+        assert top.endswith("rm-route-casing,rm-route,rm-access"), top
+        pg.evaluate("""() => { const m = window.__rs.map; for (const id of ['rm-access', 'rm-route', 'rm-route-casing', 'rm-radius-line', 'rm-radius-fill']) m.removeLayer(id);
+            for (const id of ['rm-radius', 'rm-access', 'rm-route']) m.removeSource(id); }""")                          # what a new base map does
+        pg.wait_for_timeout(2500)
+        back = pg.evaluate("() => window.__rs.map.queryRenderedFeatures({layers: ['rm-route']}).length")
+        print("after the layers were removed, route line pieces drawn again:", back)
+        assert back > 0, "the route did not come back after the layers were removed"
         print("pins:", pg.evaluate("""() => [...document.querySelectorAll('.rm-mk')].map((e) => { const r = e.getBoundingClientRect(), c = getComputedStyle(e);
             const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
             return {rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], z: c.zIndex, pos: c.position, vis: c.visibility, disp: c.display, tr: e.style.transform,
@@ -117,6 +133,21 @@ def main(db, out=None):
         after = pg.evaluate("() => JSON.stringify(window.rmLast.res ? window.rmLast.res.legs.map((l) => l.edges.length) : window.rmLast)")
         print("a drag of pin A: legs before", before, "after", after)
         assert before != after, "dragging the pin did not route again"
+
+        # 1c) full screen: GeoLibre makes the map element full screen; the planner's panel moves into a box over the map, and back
+        pg.locator("button[aria-label='Enter fullscreen']").first.click()
+        pg.wait_for_timeout(2500)
+        fs = pg.evaluate("""() => { const e = document.fullscreenElement, p = document.getElementById('rm-panel'), r = p && p.getBoundingClientRect();
+            return {fullscreen: !!e, panelInside: !!(e && p && e.contains(p)), width: r ? Math.round(r.width) : 0, pins: e ? e.querySelectorAll('.rm-mk').length : 0}; }""")
+        print("full screen:", fs)
+        assert fs["fullscreen"] and fs["panelInside"] and fs["width"] > 200 and fs["pins"] == 2, fs
+        if out:
+            pg.screenshot(path=str(Path(out) / "route_planner_fullscreen.png"))
+        pg.evaluate("() => document.exitFullscreen()")
+        pg.wait_for_timeout(2000)
+        back = pg.evaluate("() => { const p = document.getElementById('rm-panel'), r = p && p.getBoundingClientRect(); return {fullscreen: !!document.fullscreenElement, width: r ? Math.round(r.width) : 0, panel: window.__rs.app.getActiveRightPanel()}; }")
+        print("after full screen:", back)
+        assert not back["fullscreen"] and back["width"] > 200 and back["panel"] == "roadstyle-planner", back
 
         # 2) the crossings and the traffic signals show with "Show all"
         pg.evaluate("([lng, lat]) => window.__rs.map.jumpTo({center: [lng, lat], zoom: 17.5, pitch: 0, bearing: 0})", [lng, lat])
