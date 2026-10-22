@@ -80,6 +80,58 @@ fn source_features(source: &Value) -> &[Value] {
     source["data"]["features"].as_array().map_or(&[][..], |v| v.as_slice())
 }
 
+/// The allocator in the browser: the standard one (dlmalloc), but when it grows the memory, the memory grows once more by its size (16 to
+/// 256 MB) in one step, and the allocator keeps that block free for the next allocations. dlmalloc alone grows the memory 64 KB at a time,
+/// thousands of steps for Monaco, and in Edge on Windows each step is slow: the first style took 14 to 21 s there, 3 s with the memory grown first.
+#[cfg(target_arch = "wasm32")]
+mod grow {
+    use core::arch::wasm32::memory_size;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+    static PAGES: AtomicUsize = AtomicUsize::new(0); // the memory's size (64 KB pages) after the last step ahead
+
+    fn ahead() {
+        let now = memory_size(0);
+        if now != PAGES.load(Relaxed) {
+            let l = Layout::from_size_align((now << 16).clamp(16 << 20, 256 << 20), 16).unwrap();
+            unsafe {
+                let p = System.alloc(l); // null when the memory cannot grow: then nothing is taken ahead
+                if !p.is_null() {
+                    System.dealloc(p, l);
+                }
+            }
+            PAGES.store(memory_size(0), Relaxed);
+        }
+    }
+
+    struct Ahead;
+
+    unsafe impl GlobalAlloc for Ahead {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            let p = System.alloc(l);
+            ahead();
+            p
+        }
+        unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
+            let p = System.alloc_zeroed(l);
+            ahead();
+            p
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, size: usize) -> *mut u8 {
+            let q = System.realloc(p, l, size);
+            ahead();
+            q
+        }
+        unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+            System.dealloc(p, l)
+        }
+    }
+
+    #[global_allocator]
+    static ALLOC: Ahead = Ahead;
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use wasm_bindgen::prelude::*;
@@ -88,5 +140,11 @@ mod wasm {
     #[wasm_bindgen(js_name = makeStyle)]
     pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, planner: Option<Vec<u8>>, name: Option<String>) -> Result<String, JsError> {
         super::make_style(parquet, look, features, planner, name).map_err(|e| JsError::new(&e))
+    }
+
+    /// The size of the module's memory, in bytes.
+    #[wasm_bindgen(js_name = memoryBytes)]
+    pub fn memory_bytes() -> usize {
+        core::arch::wasm32::memory_size(0) * 65536
     }
 }

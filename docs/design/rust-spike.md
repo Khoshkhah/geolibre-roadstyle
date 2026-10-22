@@ -773,3 +773,27 @@ the database with the default choices, and checks the map. Result:
 
 The map has 76 roadstyle layers (52 base-map layers), the names, the arrows and the casing pieces. The route planner shows its panel, its two pins
 and a route (66 pieces drawn). No page errors. The plugin with Python takes about 18 s for the first map.
+
+## The first style was slow in Edge on Windows: the memory's growth (2026-10-22)
+
+**The problem.** In Kaveh's Edge 155 on Windows, the preview's step "making the map (Rust)" took more than 12 s for Monaco. In headless Chromium
+(Linux, the same computer) it took 2 s. A test page with only the Rust call (a new worker for each test) showed that only the **first** call was
+slow. Plain JavaScript and the later calls ran at normal speed:
+
+| Edge, Monaco | First call | Second call |
+|---|---|---|
+| The memory grows in small steps (as before) | 14.1 to 20.9 s | 3.5 to 3.9 s |
+| 1.2 GB taken first, in 1 MB blocks (the taking: 1.9 s) | 3.05 s | 2.17 s |
+| The new allocator | **2.20 to 2.84 s** | 2.03 to 2.10 s |
+
+**The cause.** Rust's standard allocator in wasm (dlmalloc) grows the module's memory 64 KB at a time: thousands of `memory.grow` steps up to
+the 738 MB that Monaco needs. In Edge on Windows each step is slow (about 1.6 ms), and on Linux it is cheap. The later calls use the memory that is
+already there. V8's two compilers are not the cause: with V8's simple compiler only (`--liftoff-only`), the call takes 3.8 s.
+
+**The fix** (`grow` in `spike/rust/src/lib.rs`, the wasm build only): an allocator in front of dlmalloc. When dlmalloc grows the memory, the
+allocator takes one more block of the memory's size (16 to 256 MB) and frees it at once, so the memory grows in about 15 large steps. dlmalloc uses
+the freed block for the next allocations (tested: the memory stays at the reserved size during the call). The cost is more memory: 857 MB, not
+738 MB, for Monaco. Released as the preview `0.20.0-rust.3`.
+
+**For later.** 738 MB for a 46 MB style is much. The style is built as `serde_json::Value` trees and copied when it is put together. Typed structs
+and fewer copies would use less memory and time in every browser.

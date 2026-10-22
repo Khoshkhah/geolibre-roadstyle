@@ -24,7 +24,7 @@ _spec = importlib.util.spec_from_file_location("s4_wasm", HERE.parent / "wasm" /
 _s4 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_s4)
 
-ID, NAME, MENU, VERSION = "roadstyle-rust", "roadstyle (Rust preview)", "roadstyle (Rust)", "0.20.0-rust.2"
+ID, NAME, MENU, VERSION = "roadstyle-rust", "roadstyle (Rust preview)", "roadstyle (Rust)", "0.20.0-rust.3"
 OUT = ROOT / "dist" / "roadstyle-rust-preview.zip"
 PATCHES = [         # (the text in index.js, the preview's): each must occur exactly once
     ('const ID = "roadstyle";', f'const ID = "{ID}";'),
