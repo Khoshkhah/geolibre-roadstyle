@@ -35,7 +35,10 @@ onmessage = async ({data}) => {
     try {
       style = await py.runPythonAsync(`import json
 from mapstyle.export import export_inline
-opts = {k: v for k, v in json.loads(rs_opts).items() if k in ("mode", "theme", "paths") and isinstance(v, str)}
+given = json.loads(rs_opts)
+opts = {k: v for k, v in given.items() if k in ("mode", "theme", "paths") and isinstance(v, str)}
+if given.get("planner") is True:
+    opts["planner"] = True                  # the route planner's graphs go into the style (mapstyle 0.11)
 json.dumps(export_inline("/home/pyodide/db.duckdb", name=rs_name, **opts), separators=(",", ":"))`);
     } finally {
       py.FS.unlink("/home/pyodide/db.duckdb");     // also after an error: the database is not kept in the worker's memory

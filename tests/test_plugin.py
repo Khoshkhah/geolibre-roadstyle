@@ -76,7 +76,7 @@ def test_syntax(f):
 
 def test_menu(host):
     ids = host.evaluate("() => rs.menu.items.map((i) => i.id)")
-    assert ids == ["db", "redraw", "add", "look", "remove"]
+    assert ids == ["db", "redraw", "add", "look", "planner", "remove"]
     assert host.errors == []
 
 
@@ -266,7 +266,7 @@ def test_database_dialog_has_the_colour_choices(host):
     assert labels[0].startswith("duckOSM database") and "Colours" in labels and "Footpaths and cycleways" in labels
     assert host.eval_on_selector_all("[role=dialog] select:nth-of-type(1) option", "(os) => os.map((o) => o.value)")
     themes = host.evaluate("() => [...document.querySelectorAll('[role=dialog] select')].map((s) => [...s.options].map((o) => o.value))")
-    assert themes[1] == ["osm", "google", "grey", "roadstyle"] and themes[3] == ["off", "on"] and themes[4] == ["off", "on"] and len(themes) == 5
+    assert themes[1] == ["osm", "google", "grey", "roadstyle"] and themes[3] == ["off", "on"] and themes[4] == ["off", "on"] and themes[5] == ["on", "off"] and len(themes) == 6
     host.keyboard.press("Escape")
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'redraw').onSelect()")       # nothing to redraw yet: a message
     host.wait_for_selector(".rs-pl-toast")
@@ -316,11 +316,11 @@ slow = pytest.mark.skipif(not DB or not Path(DB or "x").exists(), reason="set RS
 
 
 def open_db(page, **choices):
-    """the menu item, then the dialog: the file and the choices (selects by their label's order: mode, theme, paths, ocean, decks)"""
+    """the menu item, then the dialog: the file and the choices (selects by their label's order: mode, theme, paths, ocean, decks, planner)"""
     page.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
     page.wait_for_selector("[role=dialog]")
     page.set_input_files("[role=dialog] input[type=file]", DB)
-    for i, key in enumerate(("mode", "theme", "paths", "ocean", "decks")):
+    for i, key in enumerate(("mode", "theme", "paths", "ocean", "decks", "planner")):
         if key in choices:
             page.select_option(f"[role=dialog] select >> nth={i}", choices[key])
     page.click("[role=dialog] button[type=submit]")

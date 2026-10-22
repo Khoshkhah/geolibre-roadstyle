@@ -22,7 +22,7 @@
 The plugin draws roads with casings, bridges, tunnels and one-way arrows, with 3D buildings and base-map layers, over GeoLibre's own map. The map
 is made in the browser from a duckOSM database or a style file. No server is needed.
 
-> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.18.1)
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.19.0)
 >
 > 1. In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**. Choose the `.zip`.
 > 2. **Plugins › Installed › roadstyle** makes the plugin active.
@@ -65,6 +65,20 @@ Put the files on a server with **https** and **CORS** (GitHub Pages works). GeoL
 **A look for a data layer:** `rs.export_look("look.json")` writes a look. The layer needs the columns `highway`, `oneway`, `tunnel`, `bridge`,
 `casing_level` and `fill_level` (duckOSM's `duckosm export-gis --format geoparquet` writes them).
 
+## Route planner
+
+The plugin has the route planner of [duckOSM](https://github.com/Khoshkhah/duckOSM) (`duckosm route-map`), with the same panel. Open a database with
+**Route planner: on** (the default). The panel opens at the right of the map, with a route:
+
+- **Drag the two pins** (A start, B end). The route changes at once.
+- **Walk, Cycle, Drive, Walk + drive**, and **Fastest** or **Shortest**.
+- The summary shows the time and the length, with a bar for each leg. The steps are turn by turn: a click on a step zooms the map to it.
+- Click a road to keep its `edge_id` in the panel.
+- The menu item **roadstyle › Route planner** opens the panel again. **Remove roadstyle layers** closes it.
+
+The graphs are in the page, so the planner works for areas up to 150,000 roads. A bigger database opens without it. For a style file, make it with
+`export_inline(db, planner=True)`.
+
 ## The Layers panel
 
 Each map has three folders. The first is on top, and it is drawn last.
@@ -88,12 +102,13 @@ Each map has three folders. The first is on top, and it is drawn last.
 | Footpaths and cycleways | Google, OpenStreetMap, Komoot, CyclOSM |
 | Ocean polygon | off (default: GeoLibre's own map shows the sea), on |
 | 3D bridge decks | off (default), on |
+| Route planner | on (default), off |
 
 ## Needs
 
 - A browser with enough memory: the `.duckdb` file is read into memory twice.
 - The network: the plugin loads Pyodide from `cdn.jsdelivr.net` and two small packages (`folium`, `branca`) from PyPI. The roadstyle and mapstyle
-  code is in the plugin (roadstyle 0.24.0, mapstyle 0.10.0).
+  code is in the plugin (roadstyle 0.24.2, mapstyle 0.11.0).
 
 ## Build and test
 

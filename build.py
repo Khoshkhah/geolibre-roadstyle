@@ -52,9 +52,9 @@ def write_plugin_files(folder=HERE, mapstyle_src=None):
 
 def write_plugin_zip(folder, out_zip):
     """The plugin in ``folder`` as one .zip for GeoLibre's Install from file. GeoLibre gives a zip plugin no URL for its
-    other files, so the zip's index.js carries them (its ASSETS): the look, py/worker.js, py/pkgs.zip (as base64), popup.css and popup.js."""
+    other files, so the zip's index.js carries them (its ASSETS): the look, py/worker.js, py/pkgs.zip (as base64), popup.css, popup.js and the route planner's files (planner/)."""
     d = Path(folder)
-    files_ = [d / "popup.css", d / "popup.js", d / "py" / "worker.js", d / "py" / "pkgs.zip", *sorted((d / "looks").glob("*.json"))]
+    files_ = [d / "popup.css", d / "popup.js", d / "py" / "worker.js", d / "py" / "pkgs.zip", *sorted((d / "planner").glob("*")), *sorted((d / "looks").glob("*.json"))]
     assets = {p.relative_to(d).as_posix(): (base64.b64encode(p.read_bytes()).decode() if p.suffix == ".zip" else p.read_text())
               for p in files_ if p.is_file()}      # only the plugin's files (not tests/ or out/)
     index = (d / "index.js").read_text()

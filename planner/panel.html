@@ -1,0 +1,26 @@
+<div id="rm-panel">
+  <div class="rm-head"><div><h3>Route planner</h3>
+  <p class="rm-hint">Drag the two pins to set the start and the end. Click a road to copy its <code>edge_id</code>.</p></div>
+  <button type="button" class="rm-theme" id="rm-theme" aria-label="Switch between light and dark" title="Light / dark">&#9790;</button></div>
+  <select id="rm-mode" aria-label="Mode"></select>
+  <div class="rm-seg" id="rm-modes" role="group" aria-label="Mode"></div>
+  <div class="rm-seg" id="rm-weight" role="group" aria-label="Weight">
+    <input type="radio" name="rm-w" value="time" checked><input type="radio" name="rm-w" value="length">
+    <button type="button" data-w="time" class="on">Fastest</button><button type="button" data-w="length">Shortest</button>
+  </div>
+  <div class="rm-pts">
+    <div class="rm-pt"><span class="rm-pin" style="--c:var(--start)">A</span><div><small>Start</small><b id="rm-from">…</b></div></div>
+    <div class="rm-pt"><span class="rm-pin" style="--c:var(--end)">B</span><div><small>End</small><b id="rm-to">…</b></div></div>
+    <button type="button" class="rm-swap" id="rm-swap" title="Swap start and end" aria-label="Swap start and end">&#8645;</button>
+  </div>
+  <div id="rm-result"></div>
+  <p class="rm-note" id="rm-note"></p>
+  <details id="rm-more"><summary>Settings and details</summary>
+    <div class="rm-opts" id="rm-off" title="A marker may be off the road up to this distance; that walk costs walking time">
+      <label>Off-road up to (m)<input id="rm-radius" type="number" min="0" max="2000" step="5" value="50"></label>
+      <label>Walking speed (km/h)<input id="rm-speed" type="number" min="0.5" max="10" step="0.5" value="4.5"></label>
+    </div>
+    <div id="rm-edges"></div>
+    <p class="rm-clicked" id="rm-clicked"></p>
+  </details>
+</div>

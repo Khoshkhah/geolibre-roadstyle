@@ -42,6 +42,9 @@ def make_files(db, folder):
     from roadstyle.export import export_style
     style = export_inline(db)
     (folder / "style_inline.json").write_text(json.dumps(style))
+    import inspect
+    if "planner" in inspect.signature(export_inline).parameters:                      # mapstyle 0.11: the route planner's data in the style
+        (folder / "style_planner.json").write_text(json.dumps(export_inline(db, planner=True)))
     roads = mapstyle.load_roads(db)
     import duckdb
     con = duckdb.connect(str(db), read_only=True)
@@ -97,7 +100,10 @@ def main(db, out=None):
         assert pg.evaluate("() => !!(window.__rs && window.__rs.map)"), "the probe has no map"
         print("app keys:", pg.evaluate("() => Object.keys(window.__rs.app).sort().join(' ')")[:900])
 
-        for name, url in (("inline", f"{HOST}/style_inline.json"), ("tiles", f"{HOST}/tiles_export/style.json")):
+        cases = [("inline", f"{HOST}/style_inline.json"), ("tiles", f"{HOST}/tiles_export/style.json")]
+        if (tmp / "style_planner.json").exists():
+            cases.insert(1, ("planner", f"{HOST}/style_planner.json"))
+        for name, url in cases:
             menu(pg, "Add a roadstyle layer")
             pg.wait_for_selector("[role=dialog] input")
             pg.fill("[role=dialog] input", url)
@@ -115,9 +121,17 @@ def main(db, out=None):
             assert s["layers"] > 0 and any(d > 0 for d in s["drawn"]), (name, s)
             if out:
                 pg.screenshot(path=str(Path(out) / f"input_{name}.png"))
+            if name == "planner":                                      # the panel opened with a route; removing the layers takes it away
+                pl = pg.evaluate("() => ({panel: window.__rs.app.getActiveRightPanel(), pins: document.querySelectorAll('.rm-mk').length, route: !!(window.rmLast && window.rmLast.res)})")
+                print("planner:", pl)
+                assert pl == {"panel": "roadstyle-planner", "pins": 2, "route": True}, pl
             menu(pg, "Remove roadstyle layers")
             pg.wait_for_timeout(2500)
             assert state(pg)["layers"] == 0, "the layers are not removed"
+            if name == "planner":
+                gone = pg.evaluate("() => ({panel: window.__rs.app.getActiveRightPanel(), pins: document.querySelectorAll('.rm-mk').length, dom: !!document.getElementById('rm-panel'), route: !!window.__rs.map.getLayer('rm-route')})")
+                print("planner after removing:", gone)
+                assert gone == {"panel": None, "pins": 0, "dom": False, "route": False}, gone
         # "Style a layer with roadstyle": a GeoJSON data layer of the edges (with their drawing positions), and the plugin's default look
         pg.evaluate("""async (u) => { const g = await (await fetch(u)).json(); window.__rs.app.addGeoJsonLayer("monaco edges", g); }""", f"{HOST}/edges.geojson")
         pg.wait_for_timeout(8000)

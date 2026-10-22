@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.18.1";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.19.0";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -227,6 +227,7 @@ function onClick(e) {
   selected = fid(f);
   setState(m, selected, {select: true});
   closePopup();
+  if (f) document.dispatchEvent(new CustomEvent("rs:select", {detail: {properties: f.properties}}));       // the route planner's panel keeps the edge_id of the road
   if (f && rsUI && rsUI.inter.popup !== false)
     popup = makePopup(m, e.lngLat, rsUI.rfields(f.properties, "highway" in f.properties ? rsUI.inter.popup : ["name", "kind"]), {close: true});
 }
@@ -467,6 +468,79 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
   if (style.center && style.zoom != null) m.jumpTo({center: style.center, zoom: style.zoom});
   const small = style.layers.filter((l) => l.minzoom >= 16 && m.getLayoutProperty(prefix + l.id, "visibility") !== "none");
   if (small.length && m.getZoom() < 16) notify("Crossings, traffic signals and other small features show from zoom 16: zoom in to see them.", "info");
+  const meta = style.metadata || {};
+  if (meta["roadstyle:planner"]) await setupPlanner(entry, meta["roadstyle:planner"], kind);
+  else if (meta["roadstyle:planner_skipped"]) notify("The database has " + meta["roadstyle:planner_skipped"] + " roads: too many for the route planner in the browser.", "warn");
+}
+
+// ---- the route planner: the panel of `duckosm route-map` (docs/design/routing.md). planner/planner.js and its panel are made from duckOSM's template by
+// tools/make_planner.py, so the plugin shows the same panel. The data (mapstyle's planner_data) is in the style's metadata roadstyle:planner.
+// A draggable marker with the methods of MapLibre's (the host's MapLibre class is not reachable from a plugin): a DOM element over the map.
+class PlannerMarker {
+  constructor(map, {element}) { this.map = map; this.el = element; this.ll = null; this.fn = {}; this.el.style.position = "absolute"; this.el.style.left = "0"; this.el.style.top = "0"; this.el.style.zIndex = "10"; this.el.style.pointerEvents = "auto"; this.el.style.touchAction = "none"; }
+  on(ev, f) { (this.fn[ev] = this.fn[ev] || []).push(f); return this; }
+  fire(ev) { (this.fn[ev] || []).forEach((f) => f()); }
+  getLngLat() { return this.ll; }
+  setLngLat(ll) { this.ll = Array.isArray(ll) ? {lng: ll[0], lat: ll[1]} : {lng: ll.lng, lat: ll.lat}; this.place(); return this; }
+  place() { if (!this.ll) return; const p = this.map.project([this.ll.lng, this.ll.lat]), w = this.el.offsetWidth || 30, h = this.el.offsetHeight || 38;
+    this.el.style.transform = `translate(${p.x - w / 2}px,${p.y - h}px)`; }      // anchor: bottom (the tip of the pin)
+  addTo() {
+    this.map.getContainer().appendChild(this.el);
+    this.move = () => this.place(); for (const ev of ["move", "resize"]) this.map.on(ev, this.move);       // a resize (the side panel opens) moves the map without a move event
+    let drag = false;
+    this.el.addEventListener("pointerdown", (e) => { drag = true; this.el.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    this.el.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const r = this.map.getContainer().getBoundingClientRect(), h = this.el.offsetHeight || 38;
+      const ll = this.map.unproject([e.clientX - r.left, e.clientY - r.top]);     // the tip of the pin is at the pointer
+      this.ll = {lng: ll.lng, lat: ll.lat}; this.place(); this.fire("drag");
+    });
+    const end = (e) => { if (!drag) return; drag = false; try { this.el.releasePointerCapture(e.pointerId); } catch (x) { /* released */ } this.fire("dragend"); };
+    this.el.addEventListener("pointerup", end); this.el.addEventListener("pointercancel", end);
+    this.place(); return this;
+  }
+  remove() { if (this.move) for (const ev of ["move", "resize"]) this.map.off(ev, this.move); this.el.remove(); }
+}
+let planner = null;                       // {id, dispose}: the one route planner on the map
+function disposePlanner() {
+  if (!planner) return;
+  try { planner.mounted && planner.mounted.dispose(); } catch (e) { console.warn("roadstyle: the route planner did not clean up:", e); }
+  if (planner.unregister) planner.unregister();
+  planner.holder.remove();
+  planner = null;
+}
+async function setupPlanner(entry, RM, kind) {
+  const m = map();
+  if (!app.registerRightPanel || !app.openRightPanel) return notify("This GeoLibre has no side panel for plugins: the route planner is not available.", "warn");
+  disposePlanner();
+  if (!document.querySelector('link[data-roadstyle="planner"]')) {
+    const link = Object.assign(document.createElement("link"), {rel: "stylesheet", href: asset("planner/panel.css")});
+    link.dataset.roadstyle = "planner";
+    document.head.appendChild(link);
+  }
+  const html = await (await fetch(asset("planner/panel.html"))).text(), mod = await import(asset("planner/planner.js"));
+  const src = () => m.getSource(entry.prefix + "roads"), feats = () => { const d = src()._data; return (d.geojson || d).features; };
+  const H = {roadsData: () => src()._data, roadIds: () => feats().map((f, i) => i), roadProps: (ids) => ids.map((i) => (feats()[i] || {}).properties || {}),
+             recolor: () => {}, Marker: class extends PlannerMarker { constructor(o) { super(m, o); } }};
+  // the panel lives in a hidden holder, so its ids are in the document while the code mounts; the right panel moves it in and out
+  const holder = document.createElement("div"), root = document.createElement("div");
+  holder.style.display = "none"; root.className = "rs-planner"; root.innerHTML = html;
+  holder.appendChild(root); document.body.appendChild(holder);
+  planner = {id: "roadstyle-planner", holder, entry};
+  planner.mounted = mod.mount(m, RM, H);
+  planner.unregister = app.registerRightPanel({
+    id: planner.id, title: "Route planner", dock: "right-of-style", defaultWidth: 380,
+    render: (container) => { container.appendChild(root); return () => { holder.appendChild(root); }; },
+  });
+  entry.planner = true;
+  app.openRightPanel(planner.id);
+  // the panel narrows the map: after it has opened, the map shows the route from the start to the end (the page opens on the whole area, where the route is)
+  const [a, b] = [RM.start, RM.end];
+  setTimeout(() => { try { m.resize(); m.fitBounds([[Math.min(a[0], b[0]), Math.min(a[1], b[1])], [Math.max(a[0], b[0]), Math.max(a[1], b[1])]], {padding: 90, duration: 0}); } catch (e) { /* the map is gone */ } }, 600);
+}
+function openPlanner() {
+  if (!planner) return notify("Open a duckOSM database with the route planner on first (roadstyle > Open a duckOSM database).", "warn");
+  app.openRightPanel(planner.id);
 }
 
 // ---- approach 2 (docs/design/style_export.md): roadstyle's simple look on a GeoLibre data layer (DuckDB, GeoParquet, GeoJSON with
@@ -554,6 +628,7 @@ function unstyleAll() {
 }
 
 function removeEntry(a, m) {
+  if (a.planner) disposePlanner();
   if (app.unregisterExternalNativeLayer) (a.rowIds || []).forEach((id) => app.unregisterExternalNativeLayer(id));
   if (app.removeLayerGroup) (a.groupIds || []).slice().reverse().forEach((g) => g && app.removeLayerGroup(g));
   if (!m) return;
@@ -579,7 +654,7 @@ const fail = (e) => notify(String((e && e.message) || e));
 // the plugin's own files (looks, py/worker.js, py/pkgs.zip, popup.css / popup.js): by their URL when GeoLibre gives one (a plugin installed by its
 // manifest URL); a plugin installed from a .zip has none, so the zip's index.js carries them (write_plugin_zip fills ASSETS)
 const ASSETS = /*__ASSETS__*/null;
-const TYPES = {js: "text/javascript", css: "text/css", json: "application/json", zip: "application/zip"};
+const TYPES = {js: "text/javascript", css: "text/css", html: "text/html", json: "application/json", zip: "application/zip"};
 const blobs = {};                                  // a file of the .zip as a blob URL, made once
 function asset(f) {
   const url = app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f);
@@ -610,7 +685,7 @@ function makeStyle(file, box, opts) {
       if (first)                                     // a worker from a blob: GeoLibre's page cannot start one from another address
         pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
       const w = pyWorker, msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, ""),
-                                 opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths}};
+                                 opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths, planner: opts.planner !== "off"}};
       if (!pyReady) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();     // until the worker said it is ready
       w.onmessage = ({data}) => {
         if (data.step) box.say(data.step);
@@ -633,9 +708,10 @@ const dbFields = (file, o) => [
   pick("paths", "Footpaths and cycleways", [["google", "Google (calm lines)"], ["osm", "OpenStreetMap (dotted)"], ["komoot", "Komoot (bold)"], ["cyclosm", "CyclOSM (blue)"]], o.paths),
   pick("ocean", "Ocean polygon (the blue sea)", [["off", "Off: GeoLibre's own map shows the sea"], ["on", "On, as the mapstyle page"]], o.ocean),
   pick("decks", "3D bridge decks", [["off", "Off"], ["on", "On"]], o.decks),
+  pick("planner", "Route planner", [["on", "On: drop a start and an end on the map"], ["off", "Off"]], o.planner),
 ];
 let lastDb = null;                                   // {file, opts}: "Redraw with other colours" makes the same file again
-const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", ocean: "off", decks: "off"};     // all: the crossings and signals show from their zoom; the page hides them
+const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", ocean: "off", decks: "off", planner: "on"};     // all: the crossings and signals show from their zoom; the page hides them
 
 async function runDatabase(file, opts) {
   const box = progress("reading " + file.name, () => working && working.cancel());
@@ -691,6 +767,7 @@ export const plugin = {
                 {id: "redraw", label: "Redraw the database with other colours\u2026", onSelect: run(redrawDatabase)},
                 {id: "add", label: "Add a roadstyle layer\u2026", onSelect: run(askAddStyle)},
                 {id: "look", label: "Style a layer with roadstyle\u2026", onSelect: run(askStyleLayer)},
+                {id: "planner", label: "Route planner", onSelect: run(openPlanner)},
                 {id: "remove", label: "Remove roadstyle layers", onSelect: run(removeEverything)}],
       });
     }

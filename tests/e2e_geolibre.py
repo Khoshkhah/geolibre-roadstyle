@@ -85,7 +85,7 @@ def main(db, out=None):
         pg.set_input_files("[role=dialog] input[type=file]", str(db))
         if os.environ.get("RS_THEME"):                        # the colours choice, for example RS_THEME=roadstyle
             pg.select_option("[role=dialog] select >> nth=1", os.environ["RS_THEME"])
-        assert pg.eval_on_selector_all("[role=dialog] select", "(ss) => ss.map((s) => s.value)")[3:] == ["off", "off"]      # the defaults: no ocean polygon, no 3D bridge decks
+        assert pg.eval_on_selector_all("[role=dialog] select", "(ss) => ss.map((s) => s.value)")[3:] == ["off", "off", "on"]      # the defaults: no ocean polygon, no 3D bridge decks, the route planner on
         pg.click("[role=dialog] button[type=submit]")
         pg.wait_for_selector(".rs-pl-progress", timeout=20000)
         pg.wait_for_selector(".rs-pl-progress", state="detached", timeout=400000)
@@ -98,6 +98,25 @@ def main(db, out=None):
         print("page errors:", errors[-5:], "| roadstyle said:", said[-8:])
         print("arrow layers:", pg.evaluate("() => window.__rs.map.getStyle().layers.filter((l) => /arrow/.test(l.id)).map((l) => [l.id, JSON.stringify(l.layout).slice(0, 160)])"))
         assert arrows["id"] == "rs0-oneway" and arrows["sdf"] is True and arrows["w"] != arrows["base"], arrows
+
+        # 1b) the route planner: duckOSM's panel in GeoLibre's right panel, with a route, the pins, steps; a drag of a pin routes again
+        pl = pg.evaluate("""() => ({panel: window.__rs.app.getActiveRightPanel && window.__rs.app.getActiveRightPanel(), dom: !!document.getElementById('rm-panel'),
+            pins: document.querySelectorAll('.rm-mk').length, steps: (window.rmSteps || []).length, route: !!(window.rmLast && window.rmLast.res)})""")
+        print("route planner:", pl)
+        assert pl["panel"] == "roadstyle-planner" and pl["dom"] and pl["pins"] == 2 and pl["steps"] > 0 and pl["route"], pl
+        if out:
+            pg.screenshot(path=str(Path(out) / "route_planner.png"))
+        print("pins:", pg.evaluate("""() => [...document.querySelectorAll('.rm-mk')].map((e) => { const r = e.getBoundingClientRect(), c = getComputedStyle(e);
+            const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            return {rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], z: c.zIndex, pos: c.position, vis: c.visibility, disp: c.display, tr: e.style.transform,
+                    parent: e.parentElement && e.parentElement.className.slice(0, 40), topAtCenter: top && (top.className || top.tagName).toString().slice(0, 40), canvasBox: (() => { const k = document.querySelector('.maplibregl-canvas-container'); const q = k && getComputedStyle(k); return q && [q.position, q.zIndex]; })()}; })"""))
+        before = pg.evaluate("() => JSON.stringify(window.rmLast.res.legs.map((l) => l.edges.length))")
+        box = pg.locator(".rm-mk").last.bounding_box()        # the end pin B (the start pin A can be under the Layers panel)
+        pg.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] - 4); pg.mouse.down(); pg.mouse.move(box["x"] - 120, box["y"] + 160, steps=8); pg.mouse.up()
+        pg.wait_for_timeout(1500)
+        after = pg.evaluate("() => JSON.stringify(window.rmLast.res ? window.rmLast.res.legs.map((l) => l.edges.length) : window.rmLast)")
+        print("a drag of pin A: legs before", before, "after", after)
+        assert before != after, "dragging the pin did not route again"
 
         # 2) the crossings and the traffic signals show with "Show all"
         pg.evaluate("([lng, lat]) => window.__rs.map.jumpTo({center: [lng, lat], zoom: 17.5, pitch: 0, bearing: 0})", [lng, lat])
@@ -162,12 +181,16 @@ def main(db, out=None):
         print("panel, from the top:", sorted(ys, key=ys.get))
         assert ys["Features (monaco)"] < ys["crossings"] < ys["Roads (monaco)"] < ys["bridges"] < ys["Background (monaco)"] < ys["water"], ys   # each row in its folder
         assert ys["Roads (monaco)"] < ys["bridges"] < ys["Background (monaco)"], ys
+        pg.evaluate("() => window.__rs.app.closeRightPanel('roadstyle-planner')")           # the route planner's panel narrows the page: the folder slider is tested with it closed
+        pg.wait_for_timeout(1500)
         # the slider "Opacity" under a folder reaches its layers: GeoLibre calls the setOpacity of every row of the folder. The first folder slider
         # that GeoLibre finds is the one of Features (the folder at the top of the panel): the 3D buildings (0.9) go to 0.9 x 0.4 = 0.36
-        slider = pg.locator("xpath=//*[normalize-space(text())='Features (monaco)']/ancestor::*[.//input[@type='range']][1]//input[@type='range']").first
+        title = pg.get_by_text("Features (monaco)", exact=True).filter(visible=True).first                  # the visible name (GeoLibre's panel also holds hidden inputs)
+        thumb = title.locator("xpath=following::*[@role='slider'][1]")                                       # the next slider after the folder's name: the folder's own
         pg.evaluate("() => { window.__maperr = []; window.__rs.map.on('error', (e) => window.__maperr.push(String(e.error && e.error.message))); }")
-        slider.evaluate("""(el) => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, 0.4);
-            el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); }""")
+        track = thumb.evaluate("""(el) => { let e = el.parentElement; while (e && e.getBoundingClientRect().width < 100) e = e.parentElement;
+            const r = e.getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height}; }""")
+        pg.mouse.click(track["x"] + track["width"] * 0.4, track["y"] + track["height"] / 2)                 # a click at 40 % of the track: the value 0.4
         pg.wait_for_timeout(2000)
         op = pg.evaluate("""() => { const m = window.__rs.map, L = m.getStyle().layers;
             const b3 = L.find((l) => l.type === 'fill-extrusion' && l.metadata && l.metadata['roadstyle:group'] === 'buildings 3D');
