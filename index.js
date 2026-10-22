@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.19.0";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.19.1";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -511,7 +511,6 @@ function disposePlanner() {
 }
 async function setupPlanner(entry, RM, kind) {
   const m = map();
-  if (!app.registerRightPanel || !app.openRightPanel) return notify("This GeoLibre has no side panel for plugins: the route planner is not available.", "warn");
   disposePlanner();
   if (!document.querySelector('link[data-roadstyle="planner"]')) {
     const link = Object.assign(document.createElement("link"), {rel: "stylesheet", href: asset("planner/panel.css")});
@@ -526,21 +525,39 @@ async function setupPlanner(entry, RM, kind) {
   const holder = document.createElement("div"), root = document.createElement("div");
   holder.style.display = "none"; root.className = "rs-planner"; root.innerHTML = html;
   holder.appendChild(root); document.body.appendChild(holder);
-  planner = {id: "roadstyle-planner", holder, entry};
-  planner.mounted = mod.mount(m, RM, H);
-  planner.unregister = app.registerRightPanel({
-    id: planner.id, title: "Route planner", dock: "right-of-style", defaultWidth: 380,
-    render: (container) => { container.appendChild(root); return () => { holder.appendChild(root); }; },
-  });
+  planner = {id: "roadstyle-planner", holder, entry, open: () => {}};
+  try { planner.mounted = mod.mount(m, RM, H); }
+  catch (e) { console.error("roadstyle: the route planner did not start:", e); const msg = String(e && e.message || e); disposePlanner(); return notify("The route planner could not start: " + msg, "error"); }
   entry.planner = true;
-  app.openRightPanel(planner.id);
+  // where the panel goes: GeoLibre's right panel; else a floating panel; else a box of our own over the map (an older GeoLibre has neither call)
+  const panel = {id: planner.id, title: "Route planner", defaultWidth: 380, render: (container) => { container.appendChild(root); return () => { holder.appendChild(root); }; }};
+  let how = null;
+  if (app.registerRightPanel && app.openRightPanel) {
+    try { planner.unregister = app.registerRightPanel({...panel, dock: "right-of-style"}); planner.open = () => app.openRightPanel(panel.id); how = "right panel"; }
+    catch (e) { console.warn("roadstyle: the right panel was refused:", e); }
+  }
+  if (!how && app.registerFloatingPanel && app.openFloatingPanel) {
+    try { planner.unregister = app.registerFloatingPanel({...panel, position: "top-right"}); planner.open = () => app.openFloatingPanel(panel.id); how = "floating panel"; }
+    catch (e) { console.warn("roadstyle: the floating panel was refused:", e); }
+  }
+  if (!how) {
+    const box = document.createElement("div"), bar = document.createElement("div");
+    box.style.cssText = "position:fixed;top:60px;right:12px;bottom:12px;width:380px;max-width:92vw;z-index:1500;overflow:auto;background:Canvas;color:CanvasText;border-radius:12px;box-shadow:0 8px 30px #0005";
+    bar.style.cssText = "position:sticky;top:0;text-align:right;padding:4px 8px;z-index:1;background:Canvas";
+    bar.innerHTML = '<button type="button" aria-label="Close" style="border:0;background:none;font-size:20px;cursor:pointer;color:inherit">\u00d7</button>';
+    bar.firstChild.onclick = () => { box.hidden = true; };
+    box.append(bar, root); document.body.appendChild(box);
+    planner.unregister = () => box.remove(); planner.open = () => { box.hidden = false; }; how = "box over the map";
+  }
+  console.info("roadstyle: the route planner is in the " + how);
+  planner.open();
   // the panel narrows the map: after it has opened, the map shows the route from the start to the end (the page opens on the whole area, where the route is)
   const [a, b] = [RM.start, RM.end];
   setTimeout(() => { try { m.resize(); m.fitBounds([[Math.min(a[0], b[0]), Math.min(a[1], b[1])], [Math.max(a[0], b[0]), Math.max(a[1], b[1])]], {padding: 90, duration: 0}); } catch (e) { /* the map is gone */ } }, 600);
 }
 function openPlanner() {
   if (!planner) return notify("Open a duckOSM database with the route planner on first (roadstyle > Open a duckOSM database).", "warn");
-  app.openRightPanel(planner.id);
+  planner.open();
 }
 
 // ---- approach 2 (docs/design/style_export.md): roadstyle's simple look on a GeoLibre data layer (DuckDB, GeoParquet, GeoJSON with
