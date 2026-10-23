@@ -12,6 +12,7 @@ export async function writeFeatures(q, catalog, specs) {
   const nets = tables.filter((r) => ["driving", "walking", "cycling"].includes(r.s) && ["edges", "private_edges", "edge_id_map"].includes(r.t))
     .map((r) => `SELECT osm_id FROM "${r.s}"."${r.t}"`).join(" UNION ");
   const parts = [];
+  const tags = (k) => `tags['${k}'][1]`, none = () => "NULL";   // the height tags of a building (none: an older file or not a building)
   for (const [i, s] of specs.entries()) {
     if (s.show === false || !(s.schema === "main" ? main : have).has(s.table)) continue;
     if (s.outside_networks && !nets) continue;
@@ -19,16 +20,17 @@ export async function writeFeatures(q, catalog, specs) {
     // a table outside features.* (the boundary: the background, the whole boundary, as in the plugin's Pyodide: no ST_Difference without the
     // spatial extension): the kind is the layer's name
     const kind = s.schema ? `'${s.name.replaceAll("'", "''")}'` : "kind";
-    const sql = (levels, height) => `SELECT ${i} AS spec, '${layer}' AS layer, rowid AS rid, CAST(osm_id AS VARCHAR) AS osm_id, ${kind} AS kind,
-        COALESCE(name, '') AS name, ${s.bearing ? "CAST(bearing AS DOUBLE)" : "CAST(NULL AS DOUBLE)"} AS bearing, CAST(${levels} AS VARCHAR) AS levels,
-        CAST(${height} AS VARCHAR) AS height, ST_AsWKB(geom) AS geometry FROM ${s.schema || "features"}.${s.table} WHERE geom IS NOT NULL
+    const sql = (tag) => `SELECT ${i} AS spec, '${layer}' AS layer, rowid AS rid, CAST(osm_id AS VARCHAR) AS osm_id, ${kind} AS kind,
+        COALESCE(name, '') AS name, ${s.bearing ? "CAST(bearing AS DOUBLE)" : "CAST(NULL AS DOUBLE)"} AS bearing, CAST(${tag('building:levels')} AS VARCHAR) AS levels,
+        CAST(${tag('roof:levels')} AS VARCHAR) AS roof_levels, CAST(${tag('height')} AS VARCHAR) AS height, CAST(${tag('min_height')} AS VARCHAR) AS min_height,
+        CAST(${tag('building:min_level')} AS VARCHAR) AS min_level, ST_AsWKB(geom) AS geometry FROM ${s.schema || "features"}.${s.table} WHERE geom IS NOT NULL
         ${s.where ? ` AND (${s.where})` : ""}${s.outside_networks ? ` AND osm_id NOT IN (${nets})` : ""}`;
     try {
       try {
-        await q(`CREATE OR REPLACE TEMP TABLE f${i} AS ${s.height ? sql("tags['building:levels'][1]", "tags['height'][1]") : sql("NULL", "NULL")}`);
+        await q(`CREATE OR REPLACE TEMP TABLE f${i} AS ${sql(s.height ? tags : none)}`);
       } catch (e) {
         if (!s.height) throw e;
-        await q(`CREATE OR REPLACE TEMP TABLE f${i} AS ${sql("NULL", "NULL")}`);      // an older file has no tags: the height of the kind
+        await q(`CREATE OR REPLACE TEMP TABLE f${i} AS ${sql(none)}`);      // an older file has no tags: the height of the kind
       }
       parts.push(`SELECT * FROM f${i}`);
     } catch (e) {

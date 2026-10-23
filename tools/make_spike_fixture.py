@@ -49,7 +49,7 @@ def _pyodide_spatial(con):
 def features_parquet(db, specs, path):
     """The base-map tables of mapstyle.map.load_layers as one Parquet file, as the worker writes it (worker/features_sql.js, the same SQL):
     a row per feature with the layer's index in layers.yaml (``spec``), its name (``layer``, or the one it is merged into), ``osm_id``, ``kind``,
-    ``name``, ``bearing``, the tags of a building's height (``levels``, ``height``) and the geometry as WKB, in the order load_layers reads them."""
+    ``name``, ``bearing``, the tags of a building's height (``levels``, ``roof_levels``, ``height``, ``min_height``, ``min_level``) and the geometry as WKB, in the order load_layers reads them."""
     import duckdb
     con = duckdb.connect()
     con.execute(f"ATTACH '{Path(db).resolve()}' AS m (READ_ONLY); USE m")
@@ -59,6 +59,7 @@ def features_parquet(db, specs, path):
     nets = " UNION ".join(f'SELECT osm_id FROM "{s}"."{t}"' for s, t in tables      # _network_ways: the ways a mode network holds
                           if s in ("driving", "walking", "cycling") and t in ("edges", "private_edges", "edge_id_map"))
     parts = []
+    tags, none = (lambda k: f"tags['{k}'][1]"), (lambda k: "NULL")     # the height tags of a building (none: an older file or not a building)
     for i, s in enumerate(specs):
         if not s.get("show", True) or s["table"] not in (main if s.get("schema") == "main" else have):
             continue
@@ -66,20 +67,21 @@ def features_parquet(db, specs, path):
             continue
         kind = "'" + s["name"] + "'" if s.get("schema") else "kind"     # a table outside features.*: the kind is the layer's name
 
-        def sql(levels, height):
+        def sql(tag):
             return (f"SELECT {i} AS spec, '{s.get('merge_into') or s['name']}' AS layer, rowid AS rid, CAST(osm_id AS VARCHAR) AS osm_id, {kind} AS kind, "
                     f"COALESCE(name, '') AS name, {'CAST(bearing AS DOUBLE)' if s.get('bearing') else 'CAST(NULL AS DOUBLE)'} AS bearing, "
-                    f"CAST({levels} AS VARCHAR) AS levels, CAST({height} AS VARCHAR) AS height, ST_AsWKB(geom) AS geometry "
+                    f"CAST({tag('building:levels')} AS VARCHAR) AS levels, CAST({tag('roof:levels')} AS VARCHAR) AS roof_levels, "
+                    f"CAST({tag('height')} AS VARCHAR) AS height, CAST({tag('min_height')} AS VARCHAR) AS min_height, "
+                    f"CAST({tag('building:min_level')} AS VARCHAR) AS min_level, ST_AsWKB(geom) AS geometry "
                     f"FROM {s.get('schema', 'features')}.{s['table']} WHERE geom IS NOT NULL" + (f" AND ({s['where']})" if s.get("where") else "")
                     + (f" AND osm_id NOT IN ({nets})" if s.get("outside_networks") else ""))
         try:
             try:
-                tags = ("tags['building:levels'][1]", "tags['height'][1]") if s.get("height") else ("NULL", "NULL")
-                con.execute(f"CREATE TEMP TABLE f{i} AS {sql(*tags)}")
+                con.execute(f"CREATE TEMP TABLE f{i} AS {sql(tags if s.get('height') else none)}")
             except duckdb.Error:
                 if not s.get("height"):
                     raise
-                con.execute(f"CREATE TEMP TABLE f{i} AS {sql('NULL', 'NULL')}")     # an older file has no tags: the height of the kind
+                con.execute(f"CREATE TEMP TABLE f{i} AS {sql(none)}")     # an older file has no tags: the height of the kind
             parts.append(f"SELECT * FROM f{i}")
         except duckdb.Error:
             continue                                  # load_layers skips a layer whose query fails

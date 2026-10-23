@@ -894,7 +894,8 @@ fn restyle(layers: Vec<Value>, ovs: &[Overlay]) -> Vec<Value> {
             let last = news.last().map(|n| n.1["id"].as_str().unwrap().to_string()).unwrap_or_else(|| layers[*lys.last().unwrap()]["id"].as_str().unwrap().to_string());
             news.push((last, new(json!({"id": format!("ov{i}-3d"), "type": "fill-extrusion", "metadata": {"roadstyle:group": "buildings 3D", "roadstyle:over": true},
                                         "layout": {"visibility": "none"},
-                                        "paint": {"fill-extrusion-color": ex["color"], "fill-extrusion-height": ["get", "height"], "fill-extrusion-opacity": ex["opacity"]}}))));
+                                        "paint": {"fill-extrusion-color": ex["color"], "fill-extrusion-height": ["get", "height"],
+                                                  "fill-extrusion-base": ["coalesce", ["get", "base"], 0], "fill-extrusion-opacity": ex["opacity"]}}))));
         }
         if let Some(mz) = ll.get("min_zoom").filter(|v| py_truth(v)) {
             for &k in lys {

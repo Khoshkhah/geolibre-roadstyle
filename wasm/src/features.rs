@@ -31,18 +31,27 @@ fn metres(text: Option<&str>) -> Option<f64> {
     Some(if feet { h * 0.3048 } else { h })
 }
 
-/// building_height: building:levels x m_per_level, else the height tag from min_height, else the height of the kind; at most max_height.
-fn building_height(levels: Option<&str>, height: Option<&str>, kind: Option<&str>, cfg: &Value) -> Value {
+/// building_height: the height tag from min_height, else (building:levels + roof:levels) x m_per_level, else the height of the kind (the
+/// order of OpenMapTiles); at most max_height.
+fn building_height(height: Option<&str>, levels: Option<&str>, roof_levels: Option<&str>, kind: Option<&str>, cfg: &Value) -> Value {
     let top = cfg.get("max_height").and_then(Value::as_f64).unwrap_or(200.0);
     let cap = |v: f64| if v <= top { json!(v) } else { cfg.get("max_height").cloned().unwrap_or(json!(200)) };
-    if let Some(l) = number(levels).map(|n| n.0).filter(|l| *l != 0.0) {
-        return cap(l * cfg["m_per_level"].as_f64().unwrap());
-    }
     if let Some(h) = metres(height).filter(|h| *h >= cfg["min_height"].as_f64().unwrap()) {
         return cap(h);
     }
+    if let Some(l) = number(levels).map(|n| n.0).filter(|l| *l != 0.0) {
+        return cap((l + number(roof_levels).map_or(0.0, |n| n.0)) * cfg["m_per_level"].as_f64().unwrap());
+    }
     let hs = &cfg["heights"];
     kind.and_then(|k| hs.get(k)).unwrap_or(&hs["default"]).clone()
+}
+
+/// building_base: the bottom of a building (part) for fill-extrusion-base: the min_height tag, else building:min_level x m_per_level, else 0.
+fn building_base(min_height: Option<&str>, min_level: Option<&str>, cfg: &Value) -> Value {
+    match metres(min_height).or_else(|| number(min_level).map(|n| n.0 * cfg["m_per_level"].as_f64().unwrap())) {
+        Some(b) if b > 0.0 => json!(b.min(cfg.get("max_height").and_then(Value::as_f64).unwrap_or(200.0))),
+        _ => json!(0),
+    }
 }
 
 /// load_layers: `{name: FeatureCollection}`, in the order of the first row of each layer; a polygon layer's features largest first.
@@ -65,7 +74,8 @@ pub fn feature_collections(parquet: Vec<u8>, look: &Value) -> Result<Map<String,
             props.insert("bearing".into(), r["bearing"].clone());
         }
         if spec["height"] == true {
-            props.insert("height".into(), building_height(r["levels"].as_str(), r["height"].as_str(), r["kind"].as_str(), b3d));
+            props.insert("height".into(), building_height(r["height"].as_str(), r["levels"].as_str(), r["roof_levels"].as_str(), r["kind"].as_str(), b3d));
+            props.insert("base".into(), building_base(r["min_height"].as_str(), r["min_level"].as_str(), b3d));
         }
         let name = r["layer"].as_str().unwrap_or_default().to_string();
         out.entry(name).or_default().push((area, crate::obj([("type", "Feature".into()), ("properties", Value::Object(props)), ("geometry", g.geojson())])));
