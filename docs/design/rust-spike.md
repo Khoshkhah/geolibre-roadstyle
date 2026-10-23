@@ -987,3 +987,15 @@ With the pin `900b43e` (above), three fixes:
 - The new test `test_build_looks_equal_fixture_looks` makes sure that the build's looks are the fixture's looks.
 
 All tests pass: `tests/` (20, with Monaco) and `spike/` (10).
+
+## One copy of the worker's SQL (2026-10-23)
+
+Kaveh agreed: `roads_sql.js` and `features_sql.js` have one copy, in roadstyle next to the engine
+(`rust/roadstyle-wasm/js/`, from commit `337cf37`). duckosm-rust takes them from the same roadstyle commit.
+
+- `ROADSTYLE_COMMIT` is `337cf37`. `worker/worker.js` imports the two files from the clone that `engine()` makes
+  (`engine/roadstyle/rust/roadstyle-wasm/js/`), and esbuild puts them into `map/worker.js`. The plugin's copies are deleted.
+- `spike/worker/run_browser.py` serves the same files. `planner_sql.js` stays in `worker/` (only the plugin uses it).
+- roadstyle's `roads_sql.js` is duckosm-rust's version: it also has the option `levels: "tags"`, and it accepts stored
+  levels with the source `tags` or `solve`. The plugin calls it as before.
+- Tests: `tests/` 20 passed (Monaco), `spike/` 10 passed.

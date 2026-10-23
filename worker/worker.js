@@ -6,8 +6,8 @@
 // module makes the style from them. The names and arrows are in the first style (no "extra": in Rust they take about 0.2 s).
 // No 3D bridge decks.
 import init, {makeStyle} from "../engine/pkg/roadstyle_wasm.js";
-import {writeRoads} from "./roads_sql.js";
-import {writeFeatures} from "./features_sql.js";
+import {writeRoads} from "../engine/roadstyle/rust/roadstyle-wasm/js/roads_sql.js";       // roadstyle's only copy (build.py: engine())
+import {writeFeatures} from "../engine/roadstyle/rust/roadstyle-wasm/js/features_sql.js";
 import {writePlanner} from "./planner_sql.js";
 
 const DUCKDB = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";      // DuckDB 1.5.4: the file's GEOMETRY type is core

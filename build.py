@@ -25,8 +25,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 VERSIONS = {"roadstyle": "0.24.3", "mapstyle": "0.12.0"}     # the looks and the Rust code follow these releases (the golden files of spike/)
 M_PER_LEVEL = 3.66     # the 3D buildings' metres for one level (OpenMapTiles), as in mapstyle's repository since 99a7dd1: mapstyle 0.12.0 has 3
-# roadstyle's Rust engine (roadstyle repository, rust/): the style, the tiles and the levels, one copy for the plugin, duckosm-rust and roadstyle
-ROADSTYLE_REPO, ROADSTYLE_COMMIT = "https://github.com/Khoshkhah/roadstyle.git", "900b43e"
+# roadstyle's Rust engine (roadstyle repository, rust/): the style, the tiles and the levels, one copy for the plugin, duckosm-rust and roadstyle;
+# also the worker's SQL (rust/roadstyle-wasm/js/: roads_sql.js, features_sql.js), which worker/worker.js imports from the clone
+ROADSTYLE_REPO, ROADSTYLE_COMMIT = "https://github.com/Khoshkhah/roadstyle.git", "337cf37"
 DB = HERE.parent / "duckOSM" / "monaco.duckdb"                 # any duckOSM database: the looks do not depend on it (only the name, which the worker gives)
 # the dialog's choices (render_map's mode, theme and paths), and the arguments a look is read with
 MODES, THEMES, PATHS = ("all", "driving", "walking", "cycling"), ("osm", "google", "grey", "roadstyle"), ("google", "osm", "komoot", "cyclosm")

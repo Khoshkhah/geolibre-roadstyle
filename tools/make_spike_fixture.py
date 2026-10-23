@@ -47,7 +47,7 @@ def _pyodide_spatial(con):
 
 
 def features_parquet(db, specs, path):
-    """The base-map tables of mapstyle.map.load_layers as one Parquet file, as the worker writes it (worker/features_sql.js, the same SQL):
+    """The base-map tables of mapstyle.map.load_layers as one Parquet file, as the worker writes it (roadstyle's rust/roadstyle-wasm/js/features_sql.js, the same SQL):
     a row per feature with the layer's index in layers.yaml (``spec``), its name (``layer``, or the one it is merged into), ``osm_id``, ``kind``,
     ``name``, ``bearing``, the tags of a building's height (``levels``, ``roof_levels``, ``height``, ``min_height``, ``min_level``) and the geometry as WKB, in the order load_layers reads them."""
     import duckdb

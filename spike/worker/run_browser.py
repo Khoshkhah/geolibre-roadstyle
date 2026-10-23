@@ -27,11 +27,12 @@ _spec = importlib.util.spec_from_file_location("s4_wasm", SPIKE / "wasm" / "run_
 _s4 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_s4)
 PKG, build = _s4.PKG, _s4.build
+SQL = SPIKE.parent / "engine" / "roadstyle" / "rust" / "roadstyle-wasm" / "js"     # the worker's SQL in roadstyle's clone (build.py: engine())
 
 
 def run(db, times_only=False):
     with tempfile.TemporaryDirectory() as tmp:
-        for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (SPIKE.parent / "worker" / "roads_sql.js", "roads_sql.js"), (SPIKE.parent / "worker" / "features_sql.js", "features_sql.js"), (SPIKE.parent / "worker" / "planner_sql.js", "planner_sql.js"),
+        for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (SQL / "roads_sql.js", "roads_sql.js"), (SQL / "features_sql.js", "features_sql.js"), (SPIKE.parent / "worker" / "planner_sql.js", "planner_sql.js"),
                           (PKG, "pkg"), (DATA / "look.json", "look.json"), (Path(db).resolve(), "map.duckdb")):
             os.symlink(src, Path(tmp) / name)
 
