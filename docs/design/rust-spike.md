@@ -974,3 +974,6 @@ browser front-end `roadstyle-wasm`). The plugin, duckosm-rust and later Python r
 - A change of the style's Rust code goes into the roadstyle repository, then `ROADSTYLE_COMMIT` moves to it.
 - At `9175c7f` the spike tests pass except the building heights: the golden files have the rule of `0806ac2`, which is
   not in the engine yet. The next pin (Kaveh's rule C for the heights) comes from the building session.
+- Now `900b43e`: Kaveh's rule C for the building heights (`fba3192`) and the typed sources `roads` and `simple` (half
+  the memory, the same output). All 9 spike tests pass. The plugin's looks come from mapstyle 0.12.0, which has
+  `m_per_level` 3; Kaveh's 3.66 comes with the next mapstyle release.

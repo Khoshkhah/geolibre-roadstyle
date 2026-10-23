@@ -25,7 +25,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 VERSIONS = {"roadstyle": "0.24.3", "mapstyle": "0.12.0"}     # the looks and the Rust code follow these releases (the golden files of spike/)
 # roadstyle's Rust engine (roadstyle repository, rust/): the style, the tiles and the levels, one copy for the plugin, duckosm-rust and roadstyle
-ROADSTYLE_REPO, ROADSTYLE_COMMIT = "https://github.com/Khoshkhah/roadstyle.git", "9175c7f"
+ROADSTYLE_REPO, ROADSTYLE_COMMIT = "https://github.com/Khoshkhah/roadstyle.git", "900b43e"
 DB = HERE.parent / "duckOSM" / "monaco.duckdb"                 # any duckOSM database: the looks do not depend on it (only the name, which the worker gives)
 # the dialog's choices (render_map's mode, theme and paths), and the arguments a look is read with
 MODES, THEMES, PATHS = ("all", "driving", "walking", "cycling"), ("osm", "google", "grey", "roadstyle"), ("google", "osm", "komoot", "cyclosm")
