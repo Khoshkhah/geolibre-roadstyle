@@ -84,6 +84,17 @@ def test_rust_style_equals_golden_for_16_choices(tmp_path):
     assert not bad, bad
 
 
+def test_build_looks_equal_fixture_looks():
+    """The looks in the plugin's map/pkgs.bin (build.py) are the fixture's looks.json, so the golden tests above cover the plugin's build
+    (needs build.py's map/ and the fixture's --choices)."""
+    import struct
+    data, pkgs = Path(__file__).parent / "data", Path(__file__).parent.parent / "map" / "pkgs.bin"
+    if not (data / "looks.json").exists() or not pkgs.exists():
+        return
+    b = pkgs.read_bytes()
+    assert json.loads(b[4:4 + struct.unpack("<I", b[:4])[0]]) == json.loads((data / "looks.json").read_text())
+
+
 def test_rust_layers_equal_golden_for_every_subset():
     """Full port step 2: the road layers the Rust crate makes for each of the 12 subsets (spike/data/layers, tools/make_layer_goldens.py: tunnels,
     twin pairs, reverse pairs, dash values, no one-way slot, no name) equal their golden layers with tolerance 0."""

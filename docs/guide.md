@@ -144,7 +144,7 @@ Tartu failed.
   at most 100,000 roads; for a bigger area it says so.
 - The network: the plugin loads DuckDB (duckdb-wasm 1.33.1-dev57.0, about 7 MB, once) from `cdn.jsdelivr.net`. The Rust module and the looks of the dialog's
   choices are inside the plugin (made with roadstyle 0.24.3 and mapstyle 0.12.0). The code of the zip is minified; the readable source is in this repository
-  (`index.js`, `worker/`, `wasm/`).
+  (`index.js`, `worker/`), and the Rust code is in the roadstyle repository (`rust/`, at `ROADSTYLE_COMMIT` in `build.py`).
 - No 3D bridge decks from a database (until a new version of them).
 
 ## Build and test

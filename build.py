@@ -24,6 +24,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 VERSIONS = {"roadstyle": "0.24.3", "mapstyle": "0.12.0"}     # the looks and the Rust code follow these releases (the golden files of spike/)
+M_PER_LEVEL = 3.66     # the 3D buildings' metres for one level (OpenMapTiles), as in mapstyle's repository since 99a7dd1: mapstyle 0.12.0 has 3
 # roadstyle's Rust engine (roadstyle repository, rust/): the style, the tiles and the levels, one copy for the plugin, duckosm-rust and roadstyle
 ROADSTYLE_REPO, ROADSTYLE_COMMIT = "https://github.com/Khoshkhah/roadstyle.git", "900b43e"
 DB = HERE.parent / "duckOSM" / "monaco.duckdb"                 # any duckOSM database: the looks do not depend on it (only the name, which the worker gives)
@@ -68,7 +69,8 @@ def _class_styles(palette, config):
 def _theme_features(theme="osm"):
     """The "features" part of mapstyle's style in the theme's colours (render_map passes load_theme(theme)'s style to feature_overlays)."""
     from mapstyle.style import load_theme
-    return load_theme(theme)[0]["features"]
+    f = load_theme(theme)[0]["features"]
+    return {**f, "buildings_3d": {**f["buildings_3d"], "m_per_level": M_PER_LEVEL}} if "buildings_3d" in f else f
 
 def _feature_images(theme="osm"):
     """Every image feature_overlays can put in roadstyle:images (the landcover textures, the point layers' icons), as data URLs: it is run on
@@ -125,7 +127,7 @@ def look_of(db, mode="all", theme="osm", paths="google"):
             "styles": styles, "head_m": head_m, "slots": slots_look, "roads_model": roads_model,
             # step 3 of the full port: the base-map layers (mapstyle's styles/layers.yaml and the 3D heights of load_layers), the look of
             # feature_overlays (the theme's "features" style) and its images, and the arrow image of roadstyle's export
-            "features": {"layers_yaml": load_style("layers"), "buildings_3d": load_style()["features"]["buildings_3d"],
+            "features": {"layers_yaml": load_style("layers"), "buildings_3d": {**load_style()["features"]["buildings_3d"], "m_per_level": M_PER_LEVEL},
                          "style": _theme_features(theme), "images": _feature_images(theme)},
             "oneway_image": oneway, "interaction": interaction}
     return json.loads(json.dumps(look, default=_json)), got["roads"]

@@ -976,4 +976,14 @@ browser front-end `roadstyle-wasm`). The plugin, duckosm-rust and later Python r
   not in the engine yet. The next pin (Kaveh's rule C for the heights) comes from the building session.
 - Now `900b43e`: Kaveh's rule C for the building heights (`fba3192`) and the typed sources `roads` and `simple` (half
   the memory, the same output). All 9 spike tests pass. The plugin's looks come from mapstyle 0.12.0, which has
-  `m_per_level` 3; Kaveh's 3.66 comes with the next mapstyle release.
+  `m_per_level` 3; `build.py` sets 3.66 (see below).
+
+## Fixes after the pin 900b43e (2026-10-23)
+
+With the pin `900b43e` (above), three fixes:
+- `worker/worker.js` imported the deleted `wasm/target/pkg`; it now imports `engine/pkg`.
+- The looks in `map/pkgs.bin` had `m_per_level` 3 (mapstyle 0.12.0), and the golden files have 3.66 (mapstyle's
+  repository). `build.py` sets `M_PER_LEVEL = 3.66` in both places of the look.
+- The new test `test_build_looks_equal_fixture_looks` makes sure that the build's looks are the fixture's looks.
+
+All tests pass: `tests/` (20, with Monaco) and `spike/` (10).
