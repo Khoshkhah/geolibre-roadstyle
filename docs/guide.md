@@ -140,8 +140,8 @@ Tartu failed.
 
 ## Needs
 
-- A browser with enough memory. The map is made in the browser's memory: Tartu (63,965 roads) needs about 2 GB. The plugin makes the map of an area with
-  at most 100,000 roads; for a bigger area it says so.
+- A browser with enough memory. The map is made in the browser's memory: for Tartu (63,965 roads) the Rust module needs about 0.9 GB (1.4 GB before
+  0.22.0), and the browser more for the map. The plugin makes the map of an area with at most 100,000 roads; for a bigger area it says so.
 - The network: the plugin loads DuckDB (duckdb-wasm 1.33.1-dev57.0, about 7 MB, once) from `cdn.jsdelivr.net`. The Rust module and the looks of the dialog's
   choices are inside the plugin (made with roadstyle 0.24.3 and mapstyle 0.12.0). The code of the zip is minified; the readable source is in this repository
   (`index.js`, `worker/`), and the Rust code is in the roadstyle repository (`rust/`, at `ROADSTYLE_COMMIT` in `build.py`).
