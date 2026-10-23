@@ -7,7 +7,8 @@
 
 Needs roadstyle 0.24.3 and mapstyle 0.12.0 (``pip install roadstyle==0.24.3 mapstyle==0.12.0``: the Rust code follows them, see
 spike/test_compare.py), cargo with the wasm32-unknown-unknown target, the wasm-bindgen program (0.2.129) and npx (esbuild). The browser
-runs no Python: the map of a database is made by DuckDB (duckdb-wasm) and the Rust module in wasm/ (docs/design/rust-spike.md).
+runs no Python: the map of a database is made by DuckDB (duckdb-wasm) and the Rust module: roadstyle's own Rust engine (roadstyle repository,
+rust/, the crate roadstyle-wasm) at ROADSTYLE_COMMIT, cloned into engine/ (docs/design/rust-spike.md, "The engine moves to roadstyle").
 """
 import argparse
 import base64
@@ -23,6 +24,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 VERSIONS = {"roadstyle": "0.24.3", "mapstyle": "0.12.0"}     # the looks and the Rust code follow these releases (the golden files of spike/)
+# roadstyle's Rust engine (roadstyle repository, rust/): the style, the tiles and the levels, one copy for the plugin, duckosm-rust and roadstyle
+ROADSTYLE_REPO, ROADSTYLE_COMMIT = "https://github.com/Khoshkhah/roadstyle.git", "9175c7f"
 DB = HERE.parent / "duckOSM" / "monaco.duckdb"                 # any duckOSM database: the looks do not depend on it (only the name, which the worker gives)
 # the dialog's choices (render_map's mode, theme and paths), and the arguments a look is read with
 MODES, THEMES, PATHS = ("all", "driving", "walking", "cycling"), ("osm", "google", "grey", "roadstyle"), ("google", "osm", "komoot", "cyclosm")
@@ -144,12 +147,23 @@ def looks(db=DB):
     return {"parts": parts, "choices": choices}
 
 
+def engine():
+    """The rust/ folder of roadstyle's Rust engine at ROADSTYLE_COMMIT: a clone in engine/roadstyle (made the first time, then fetched)."""
+    repo = HERE / "engine" / "roadstyle"
+    if not repo.exists():
+        subprocess.run(["git", "clone", "-q", ROADSTYLE_REPO, str(repo)], check=True)
+    if subprocess.run(["git", "-C", str(repo), "cat-file", "-e", ROADSTYLE_COMMIT + "^{commit}"], capture_output=True).returncode:
+        subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin"], check=True)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", ROADSTYLE_COMMIT], check=True)
+    return repo / "rust"
+
+
 def build_wasm():
-    """The Rust module (wasm/) as wasm/target/pkg: roadstyle_wasm_bg.wasm and its JavaScript glue."""
-    crate, pkg = HERE / "wasm", HERE / "wasm" / "target" / "pkg"
-    subprocess.run(["cargo", "build", "--release", "--offline", "--target", "wasm32-unknown-unknown", "--lib", "-q"], cwd=crate, check=True)
+    """The Rust module (the engine's crate roadstyle-wasm) as engine/pkg: roadstyle_wasm_bg.wasm and its JavaScript glue."""
+    rust, pkg = engine(), HERE / "engine" / "pkg"
+    subprocess.run(["cargo", "build", "--release", "--target", "wasm32-unknown-unknown", "-p", "roadstyle-wasm", "-q"], cwd=rust, check=True)
     subprocess.run(["wasm-bindgen", "--target", "web", "--out-dir", str(pkg),
-                    str(crate / "target" / "wasm32-unknown-unknown" / "release" / "roadstyle_wasm.wasm")], check=True)
+                    str(rust / "target" / "wasm32-unknown-unknown" / "release" / "roadstyle_wasm.wasm")], check=True)
     return pkg
 
 

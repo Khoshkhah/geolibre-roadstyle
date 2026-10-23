@@ -961,3 +961,16 @@ natively: 5.2 s to 3.6–3.9 s.
 The pixels of the maps are the same except for the edges of lines and one street name that MapLibre places at another
 point of its street (the tiles cut the line). The module's own memory (1,387 MiB on Tartu) does not change: the
 sources are still made as JSON trees first. `MAX_ROADS` stays 100,000 for that reason.
+
+## The engine moves to roadstyle (2026-10-23)
+
+Kaveh's decision: one Rust engine for roadstyle, in the roadstyle repository (`rust/`: the library `roadstyle-rs` and the
+browser front-end `roadstyle-wasm`). The plugin, duckosm-rust and later Python roadstyle use that one copy.
+
+- The crate `wasm/` of this repository is deleted. `build.py` has `ROADSTYLE_COMMIT` (now `9175c7f`); `engine()` clones
+  roadstyle into `engine/roadstyle` (not in git) at that commit, and `build_wasm()` builds `roadstyle-wasm` there into
+  `engine/pkg`. `spike/test_compare.py` and `spike/wasm/run_browser.py` use the same clone (the native program is now
+  `roadstyle-rs`).
+- A change of the style's Rust code goes into the roadstyle repository, then `ROADSTYLE_COMMIT` moves to it.
+- At `9175c7f` the spike tests pass except the building heights: the golden files have the rule of `0806ac2`, which is
+  not in the engine yet. The next pin (Kaveh's rule C for the heights) comes from the building session.

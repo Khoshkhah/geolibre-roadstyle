@@ -1,7 +1,7 @@
 out/
 __pycache__/
 spike/data/
-wasm/target/
+engine/
 spike/profile/browser_result.json
 map/
 .venv/
