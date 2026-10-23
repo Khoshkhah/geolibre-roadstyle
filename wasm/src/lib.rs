@@ -10,6 +10,7 @@ pub mod read;
 pub mod roads;
 pub mod simple;
 pub mod slots;
+pub mod tiles;
 
 use serde_json::{json, Value};
 
@@ -17,10 +18,22 @@ use serde_json::{json, Value};
 /// 1.9 GB; docs/design/rust-spike.md).
 pub const MAX_ROADS: usize = 100_000;
 
-/// The style's layers and sources, as JSON text: the roads ("roads", "simple", "slots") and, with `features` (the base-map tables as the
-/// worker's SQL writes them), the base map ("ov<i>"). `look`: look.json (the resolved look); `parquet`: the roads as
-/// tools/make_spike_fixture.py (or the worker's SQL) writes them.
-pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, planner: Option<Vec<u8>>, name: Option<String>) -> Result<String, String> {
+/// The parts of a style: its layers, its sources in their order (roads, ov<i>, simple, slots), its metadata and its camera.
+pub struct Parts {
+    pub name: Value,
+    pub center: Value,
+    pub zoom: Value,
+    pub layers: Vec<Value>,
+    pub sources: Vec<(String, Value)>,
+    pub metadata: Value,
+    /// The names' font, when there are labels.
+    pub glyphs: Option<Value>,
+}
+
+/// The style's layers and sources: the roads ("roads", "simple", "slots") and, with `features` (the base-map tables as the worker's SQL
+/// writes them), the base map ("ov<i>"). `look`: look.json (the resolved look); `parquet`: the roads as tools/make_spike_fixture.py (or
+/// the worker's SQL) writes them.
+pub fn make_parts(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, planner: Option<Vec<u8>>, name: Option<String>) -> Result<Parts, String> {
     let look_json: Value = serde_json::from_str(look).map_err(|e| format!("look: not JSON: {e}"))?;
     let look = roads::Look::from_json(&look_json)?;
     let mut feats = read::read_roads(parquet, "geometry")?;
@@ -40,22 +53,17 @@ pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, plann
         (ovs, images) = overlays::feature_overlays(fcs, &look_json, &attached);
     }
     let layers = layers::road_layers(&look_json, source_features(&roads), source_features(&simple), source_features(&slots), &mut ovs)?;
-    let glyphs = !source_features(&slots).is_empty();
-    // The sources become text now, one at a time, and each tree is freed at once: a big area's trees are the most of the memory (Tartu: the
-    // peak went from 4.3 GB to 2.5 GB natively). The text has the keys in the order of the style before: roads, ov<i>, simple, slots.
-    let mut sources = vec![("roads".to_string(), roads.to_string())];
-    drop(roads);
+    let glyphs = (!source_features(&slots).is_empty()).then(|| look_json["theme"]["labels"]["glyphs"].clone());
+    let mut sources = vec![("roads".to_string(), roads)];
     for (i, ov) in ovs.into_iter().enumerate() {
         let mut s = serde_json::Map::new();
         s.insert("type".into(), "geojson".into());
         s.insert("data".into(), ov.fc);
         s.insert("generateId".into(), true.into());
-        sources.push((format!("ov{i}"), Value::Object(s).to_string()));
+        sources.push((format!("ov{i}"), Value::Object(s)));
     }
-    sources.push(("simple".into(), simple.to_string()));
-    drop(simple);
-    sources.push(("slots".into(), slots.to_string()));
-    drop(slots);
+    sources.push(("simple".into(), simple));
+    sources.push(("slots".into(), slots));
     images.insert("oneway".into(), look_json["oneway_image"].clone());
     let mut metadata = serde_json::Map::new();
     // the export's page metadata: the road popup's fields, the hover tooltip and the hover delay (roadstyle:interaction)
@@ -70,22 +78,67 @@ pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, plann
         }
     }
     let (center, zoom) = camera(&feats);
-    drop(feats);
     let name = name.map_or_else(|| look_json["args"]["name"].clone(), Value::from);
-    let metadata = Value::Object(metadata).to_string();
-    let mut out = String::with_capacity(sources.iter().map(|(_, s)| s.len() + 16).sum::<usize>() + metadata.len() + (1 << 20));
-    out += &format!(r#"{{"version":8,"name":{name},"center":{center},"zoom":{zoom},"layers":{},"sources":{{"#, Value::Array(layers));
+    Ok(Parts { name, center, zoom, layers, sources, metadata: Value::Object(metadata), glyphs })
+}
+
+/// The style as one JSON text, with each source's GeoJSON in it (roadstyle's export_inline).
+pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, planner: Option<Vec<u8>>, name: Option<String>) -> Result<String, String> {
+    let Parts { name, center, zoom, layers, sources, metadata, glyphs } = make_parts(parquet, look, features, planner, name)?;
+    // The sources become text one at a time, and each tree is freed at once: a big area's trees are the most of the memory (Tartu: the
+    // peak went from 4.3 GB to 2.5 GB natively).
+    let metadata = metadata.to_string();
+    let mut out = format!(r#"{{"version":8,"name":{name},"center":{center},"zoom":{zoom},"layers":{},"sources":{{"#, Value::Array(layers));
     for (i, (k, s)) in sources.into_iter().enumerate() {
         out += &format!("{}{}:", if i > 0 { "," } else { "" }, Value::from(k));
-        out += &s;
+        out += &s.to_string();
     }
     out += r#"},"metadata":"#;
     out += &metadata;
-    if glyphs {
-        out += &format!(r#","glyphs":{}"#, look_json["theme"]["labels"]["glyphs"]);      // the names' font (roadstyle: when there are labels)
+    if let Some(g) = glyphs {
+        out += &format!(r#","glyphs":{g}"#);
     }
     out.push('}');
     Ok(out)
+}
+
+/// The style with vector-tile sources (`<prefix><source>/{z}/{x}/{y}`), and the tiles to answer them with (tiles.rs). The layers,
+/// the metadata and the camera are those of `make_style`; each layer gets `source-layer`, the name of its source. The tiles keep only
+/// the properties that are read: the texts in the layers (all their keys, and more), the popup and tooltip fields of the metadata, the
+/// overlays' popup fields (name, kind) and `keep` (the caller's own, for example its popup's).
+pub fn make_tiled(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, name: Option<String>, prefix: &str, keep: &[String])
+                  -> Result<(String, tiles::Tiles), String> {
+    let Parts { name, center, zoom, mut layers, sources, metadata, glyphs } = make_parts(parquet, look, features, None, name)?;
+    let mut read: std::collections::HashSet<String> = keep.iter().cloned().chain(["name".to_string(), "kind".to_string()]).collect();
+    fn texts(v: &Value, out: &mut std::collections::HashSet<String>) {
+        match v {
+            Value::String(s) => {
+                out.insert(s.clone());
+            }
+            Value::Array(a) => a.iter().for_each(|x| texts(x, out)),
+            Value::Object(o) => o.values().for_each(|x| texts(x, out)),
+            _ => {}
+        }
+    }
+    layers.iter().for_each(|l| texts(l, &mut read));
+    texts(&metadata["roadstyle:interaction"], &mut read);
+    let mut tiled = tiles::Tiles::default();
+    let mut vector = serde_json::Map::new();
+    for (k, s) in sources {
+        tiled.add(&k, s, &read); // frees the source's tree
+        vector.insert(k.clone(), json!({"type": "vector", "tiles": [format!("{prefix}{k}/{{z}}/{{x}}/{{y}}")], "minzoom": 0,
+                                        "maxzoom": tiles::MAX_ZOOM}));
+    }
+    for l in layers.iter_mut() {
+        if let Some(src) = l.get("source").cloned() {
+            l["source-layer"] = src;
+        }
+    }
+    let mut style = json!({"version": 8, "name": name, "center": center, "zoom": zoom, "layers": layers, "sources": vector, "metadata": metadata});
+    if let Some(g) = glyphs {
+        style["glyphs"] = g;
+    }
+    Ok((style.to_string(), tiled))
 }
 
 /// roadstyle.export._camera: the centre and the zoom that fit the roads' bounds in a 1024 x 768 px view, as the page's fitBounds.
@@ -172,6 +225,37 @@ mod wasm {
     #[wasm_bindgen(js_name = makeStyle)]
     pub fn make_style(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, planner: Option<Vec<u8>>, name: Option<String>) -> Result<String, JsError> {
         super::make_style(parquet, look, features, planner, name).map_err(|e| JsError::new(&e))
+    }
+
+    /// A map with vector tiles: `new Tiler(roads, look, features?, name?, prefix, keep)`, then `style()` (the style's JSON text) and
+    /// `tile(source, z, x, y)` (a vector tile, empty when nothing is in it) for each request of the map, and `props(source, id)`.
+    #[wasm_bindgen]
+    pub struct Tiler {
+        style: String,
+        tiles: crate::tiles::Tiles,
+    }
+
+    #[wasm_bindgen]
+    impl Tiler {
+        #[wasm_bindgen(constructor)]
+        pub fn new(parquet: Vec<u8>, look: &str, features: Option<Vec<u8>>, name: Option<String>, prefix: &str, keep: Vec<String>)
+                   -> Result<Tiler, JsError> {
+            let (style, tiles) = super::make_tiled(parquet, look, features, name, prefix, &keep).map_err(|e| JsError::new(&e))?;
+            Ok(Tiler { style, tiles })
+        }
+
+        pub fn style(&self) -> String {
+            self.style.clone()
+        }
+
+        pub fn tile(&self, source: &str, z: u32, x: u32, y: u32) -> Vec<u8> {
+            self.tiles.tile(source, z, x, y)
+        }
+
+        /// The properties of the feature `id` of a source, as JSON (`null` when there is none).
+        pub fn props(&self, source: &str, id: u32) -> String {
+            self.tiles.props(source, id as u64)
+        }
     }
 
     /// The size of the module's memory, in bytes.

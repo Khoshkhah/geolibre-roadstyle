@@ -3,6 +3,7 @@
 //!     cargo run --release -- spike/data/look.json spike/data/roads.parquet spike/data/features.parquet spike/data/planner.parquet made.json
 //!     (- for no features or no planner)
 //!     cargo run --release -- --layers spike/data/look.json spike/data/layers/all/roads.parquet     # the road layers alone, as {"layers": [...]}
+//!     cargo run --release -- --tiles look.json roads.parquet features.parquet     # the map with vector tiles: the times and the sizes
 
 use roadstyle_wasm::{layers, read, roads, simple, slots};
 use serde_json::{json, Value};
@@ -30,6 +31,41 @@ fn main() {
         let data = fs::read(&args[3]).unwrap_or_else(|e| fail(format!("{}: {e}", args[3])));
         let fcs = roadstyle_wasm::features::feature_collections(data, &json_file(&args[2])).unwrap_or_else(|e| fail(e));
         println!("{}", serde_json::to_string(&fcs).unwrap());
+        return;
+    }
+    if args.len() == 5 && args[1] == "--tiles" {
+        // the map with vector tiles (make_tiled), then every tile of the roads' box at zooms 12, 14 and 16: the times and sizes
+        let read = |p: &str| if p == "-" { None } else { Some(fs::read(p).unwrap_or_else(|e| fail(format!("{p}: {e}")))) };
+        let t = Instant::now();
+        let (style, tiles) = roadstyle_wasm::make_tiled(read(&args[3]).unwrap(), &fs::read_to_string(&args[2]).unwrap(), read(&args[4]), None,
+                                                        "rs://", &["osm_id".into(), "access".into()]).unwrap_or_else(|e| fail(e));
+        eprintln!("make_tiled {:.0} ms (style {:.1} KB)", t.elapsed().as_secs_f64() * 1e3, style.len() as f64 / 1e3);
+        let style: Value = serde_json::from_str(&style).unwrap();
+        let (c, names) = (&style["center"], style["sources"].as_object().unwrap().keys().cloned().collect::<Vec<_>>());
+        let (lon, lat) = (c[0].as_f64().unwrap(), c[1].as_f64().unwrap());
+        for z in [12u32, 14, 16] {
+            let n = (1u64 << z) as f64;
+            let (x, y) = ((lon + 180.0) / 360.0 * n, (1.0 - (lat.to_radians().tan() + 1.0 / lat.to_radians().cos()).ln() / std::f64::consts::PI) / 2.0 * n);
+            let r = (8u32 << (z - 12)) / 2; // about 8 km around the centre
+            let t = Instant::now();
+            let (mut count, mut bytes, mut most) = (0, 0usize, 0usize);
+            for tx in (x as u32).saturating_sub(r)..=(x as u32 + r) {
+                for ty in (y as u32).saturating_sub(r)..=(y as u32 + r) {
+                    let all: usize = names.iter().map(|s| tiles.tile(s, z, tx, ty).len()).sum();
+                    if all > 0 {
+                        count += 1;
+                        bytes += all;
+                        most = most.max(all);
+                    }
+                }
+            }
+            if z == 12 {
+                let (tx, ty) = (x as u32, y as u32);
+                eprintln!("  z12 centre tile by source: {}", names.iter().map(|s| format!("{s} {:.0} KB", tiles.tile(s, z, tx, ty).len() as f64 / 1e3)).collect::<Vec<_>>().join(", "));
+            }
+            eprintln!("z{z}: {count} tiles with data, {:.1} MB, the largest {:.0} KB, {:.2} ms a tile", bytes as f64 / 1e6, most as f64 / 1e3,
+                      t.elapsed().as_secs_f64() * 1e3 / count.max(1) as f64);
+        }
         return;
     }
     let layers_only = args.len() == 4 && args[1] == "--layers";

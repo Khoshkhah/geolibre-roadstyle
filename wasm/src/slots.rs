@@ -321,6 +321,8 @@ pub fn slots_source(roads: &[Feature], look: &SlotLook) -> Value {
             }
         }
         let rank = hw.as_str().and_then(|h| look.z_order.get(h)).cloned().unwrap_or(json!(0));
+        let near: Option<RTree<GeomWithData<Rectangle<[f64; 2]>, usize>>> = (n > 32).then(|| RTree::bulk_load(edges.iter().enumerate()
+            .map(|(g, e)| { let (lo, hi) = bbox(&e.c); GeomWithData::new(Rectangle::from_corners(lo, hi), g) }).collect()));
 
         for (chain, members) in &chains {
             let cid = 1 + members.iter().map(|&e| edges[e].owner.0).min().unwrap();
@@ -332,6 +334,9 @@ pub fn slots_source(roads: &[Feature], look: &SlotLook) -> Value {
                 .map(|&e| edges[e].c.iter().rev().map(|p| (p[0].to_bits(), p[1].to_bits())).collect()).collect();
             let (lo, hi) = bbox(chain);
             let mut cuts: Vec<(f64, f64)> = Vec::new();
+            // a long chain: an R-tree of its segments, else every road in its box is checked against all of them (Tartu: 2 s)
+            let segs = (chain.len() > 16).then(|| RTree::bulk_load(chain.windows(2).enumerate()
+                .map(|(i, w)| { let (lo, hi) = bbox(w); GeomWithData::new(Rectangle::from_corners(lo, hi), i) }).collect()));
             for hit in tree.locate_in_envelope_intersecting(&AABB::from_corners(lo, hi)) {
                 let k = hit.data;
                 let kc = roads[k].coords.as_ref().unwrap();
@@ -339,14 +344,23 @@ pub fn slots_source(roads: &[Feature], look: &SlotLook) -> Value {
                     continue;
                 }
                 let half = look.crossing_half_m(hw_of(k).and_then(Value::as_str), line.lat0);
-                for w in chain.windows(2) {
-                    for v in kc.windows(2) {
-                        let pts = seg_meet(w[0], w[1], v[0], v[1]);
-                        if pts.is_empty() {
-                            continue;
-                        }
+                let mut meet = |w: &[Pt], v: &[Pt]| {
+                    let pts = seg_meet(w[0], w[1], v[0], v[1]);
+                    if !pts.is_empty() {
                         let d: Vec<f64> = pts.iter().map(|p| project(&line.xy, [(p[0] - line.lon0) * line.kx, (p[1] - line.lat0) * KY])).collect();
                         cuts.push((d.iter().copied().fold(f64::INFINITY, f64::min) - half, d.iter().copied().fold(f64::NEG_INFINITY, f64::max) + half));
+                    }
+                };
+                for v in kc.windows(2) {
+                    match &segs {
+                        // only the chain's segments whose box meets this segment's box can meet it (the cuts are sorted below)
+                        Some(t) => {
+                            let (lo, hi) = bbox(v);
+                            for h in t.locate_in_envelope_intersecting(&AABB::from_corners(lo, hi)) {
+                                meet(&chain[h.data..h.data + 2], v);
+                            }
+                        }
+                        None => chain.windows(2).for_each(|w| meet(w, v)),
                     }
                 }
             }
@@ -384,12 +398,24 @@ pub fn slots_source(roads: &[Feature], look: &SlotLook) -> Value {
                     let (road, twin) = if n == 1 { edges[0].owner } else {
                         let m = line.at((a + b) / 2.0);
                         let pt = [m[0] / line.kx + line.lon0, m[1] / KY + line.lat0];
+                        // the nearest road of the group (the first of equal distances): a big group looks only at the roads whose box
+                        // is as near as the nearest road of this chain
                         let mut best = (f64::INFINITY, 0);
-                        for (g, e) in edges.iter().enumerate() {
-                            let d = point_line_dist(pt, &e.c);
-                            if d < best.0 {
-                                best = (d, g);
+                        let try_road = |g: usize, best: &mut (f64, usize)| {
+                            let d = point_line_dist(pt, &edges[g].c);
+                            if d < best.0 || (d == best.0 && g < best.1) {
+                                *best = (d, g);
                             }
+                        };
+                        match &near {
+                            Some(t) => {
+                                members.iter().for_each(|&g| try_road(g, &mut best));
+                                let r = best.0;
+                                for h in t.locate_in_envelope_intersecting(&AABB::from_corners([pt[0] - r, pt[1] - r], [pt[0] + r, pt[1] + r])) {
+                                    try_road(h.data, &mut best);
+                                }
+                            }
+                            None => (0..n).for_each(|g| try_road(g, &mut best)),
                         }
                         edges[best.1].owner
                     };

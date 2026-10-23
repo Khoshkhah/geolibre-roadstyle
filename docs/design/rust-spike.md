@@ -923,3 +923,41 @@ The work of the plan is done; the release waits for Kaveh.
 | The same again (from the browser's storage) | 2.7 s | 12.2 s |
 | Other choices | 4.0 s | 20.0 s |
 | roadstyle 0.20.1 (Python), first open | about 18 s | fails (NaN in the JSON) |
+
+## Vector tiles for duckosm-rust's page, and a faster slots step (2026-10-23)
+
+duckosm-rust's page (one map for a build in the browser) gave MapLibre the whole style as one text with inline GeoJSON:
+Tartu was 150 MB of text, the page parsed it, and MapLibre cut all of it into tiles again. Kaveh asked for vector tiles.
+
+**What is new in `wasm/`:**
+- `make_parts` makes the layers, the sources, the metadata and the camera. `make_style` (the plugin's `makeStyle`) writes
+  them as one text, as before: its output is byte for byte the same on Monaco and Tartu.
+- `make_tiled` and the wasm class `Tiler` (`tiles.rs`): the same layers, each with `source-layer`, and each source as
+  `{"type": "vector", "tiles": ["<prefix><source>/{z}/{x}/{y}"]}`. `tile(source, z, x, y)` makes a vector tile (MVT 2.1)
+  when the map asks for it: an R-tree finds the features, the lines and rings are cut to the tile and a buffer of
+  64 px, and the points are rounded to the 4096 units of the tile. Zoom 16 is the last zoom of the tiles.
+- The tiles keep each feature's id (`id`, or its position for `generateId`) and only the properties that something
+  reads: the texts in the layers, the popup and tooltip fields of the metadata, `name` and `kind`, and the caller's keys.
+  A null value is not in a tile; MapLibre reads a missing value as null.
+- `props(source, id)`: the properties of one feature. The style hides the layers of the source `roads` (the roads are
+  drawn from `simple`), and MapLibre does not load a source whose layers are all hidden. A click on a road finds the
+  drawn piece, and its `__rs_edge` is the id for `props("roads", id)`.
+- `main.rs --tiles look.json roads.parquet features.parquet`: the times and the sizes of the tiles.
+
+**slots was slow** (Tartu 2.28 s of 6.0 s). Two parts grew with the square of the size: every road in a chain's
+box was checked against every segment of the chain, and each slot measured its distance to every road of its
+group (one group holds, for example, all unnamed residential streets). Now an R-tree of the chain's segments
+and an R-tree of the group's roads find the candidates. The result is the same (the first of equal distances
+still wins), and `makeStyle`'s text is byte for byte the same. slots: 2.28 s to 0.70 s; the whole style on Tartu,
+natively: 5.2 s to 3.6–3.9 s.
+
+**In duckosm-rust's page** (headless Chromium with software rendering, from the click to an idle map):
+
+| Area | GeoJSON in the style | Vector tiles | Page memory (JS heap) |
+|---|---|---|---|
+| Monaco | 3.1–3.4 s | 2.0 s | 215–242 MiB to 51–54 MiB |
+| Tartu (63,965 roads) | 15.7 s | 7.4 s | 803 MiB to 104 MiB |
+
+The pixels of the maps are the same except for the edges of lines and one street name that MapLibre places at another
+point of its street (the tiles cut the line). The module's own memory (1,387 MiB on Tartu) does not change: the
+sources are still made as JSON trees first. `MAX_ROADS` stays 100,000 for that reason.
