@@ -5,10 +5,10 @@
 // duckdb-wasm reads the file and writes the roads, the base-map tables and the planner's tables as Parquet (../worker/*_sql.js); the Rust
 // module makes the style from them. The names and arrows are in the first style (no "extra": in Rust they take about 0.2 s).
 // No 3D bridge decks.
-import init, {makeStyle} from "../rust/target/pkg/roadstyle_spike.js";
-import {writeRoads} from "../worker/roads_sql.js";
-import {writeFeatures} from "../worker/features_sql.js";
-import {writePlanner} from "../worker/planner_sql.js";
+import init, {makeStyle} from "../wasm/target/pkg/roadstyle_wasm.js";
+import {writeRoads} from "./roads_sql.js";
+import {writeFeatures} from "./features_sql.js";
+import {writePlanner} from "./planner_sql.js";
 
 const DUCKDB = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";      // DuckDB 1.5.4: the file's GEOMETRY type is core
 let db = null, looks = null;

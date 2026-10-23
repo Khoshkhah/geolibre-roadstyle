@@ -4,7 +4,7 @@
 //!     (- for no features or no planner)
 //!     cargo run --release -- --layers spike/data/look.json spike/data/layers/all/roads.parquet     # the road layers alone, as {"layers": [...]}
 
-use roadstyle_spike::{layers, read, roads, simple, slots};
+use roadstyle_wasm::{layers, read, roads, simple, slots};
 use serde_json::{json, Value};
 use std::time::Instant;
 use std::{env, fs, process};
@@ -28,14 +28,14 @@ fn main() {
     if args.len() == 4 && args[1] == "--features" {
         // step 3 check: the base-map feature collections from the worker's features.parquet, as {name: FeatureCollection}
         let data = fs::read(&args[3]).unwrap_or_else(|e| fail(format!("{}: {e}", args[3])));
-        let fcs = roadstyle_spike::features::feature_collections(data, &json_file(&args[2])).unwrap_or_else(|e| fail(e));
+        let fcs = roadstyle_wasm::features::feature_collections(data, &json_file(&args[2])).unwrap_or_else(|e| fail(e));
         println!("{}", serde_json::to_string(&fcs).unwrap());
         return;
     }
     let layers_only = args.len() == 4 && args[1] == "--layers";
     if !layers_only && args.len() != 6 {
-        fail("usage: roadstyle-spike <look.json> <roads.parquet> <features.parquet | -> <planner.parquet | -> <out.json>  |  \
-              roadstyle-spike --layers <look.json> <roads.parquet>".into());
+        fail("usage: roadstyle-wasm <look.json> <roads.parquet> <features.parquet | -> <planner.parquet | -> <out.json>  |  \
+              roadstyle-wasm --layers <look.json> <roads.parquet>".into());
     }
     let (look_path, roads_path) = if layers_only { (&args[2], &args[3]) } else { (&args[1], &args[2]) };
     let look_json = json_file(look_path);
@@ -48,7 +48,7 @@ fn main() {
     if !layers_only {
         // the whole style, as the worker makes it (make_style), with the total time
         let t = Instant::now();
-        let text = roadstyle_spike::make_style(data, &fs::read_to_string(look_path).unwrap(), fdata, pdata, None).unwrap_or_else(|e| fail(e));
+        let text = roadstyle_wasm::make_style(data, &fs::read_to_string(look_path).unwrap(), fdata, pdata, None).unwrap_or_else(|e| fail(e));
         let dt = t.elapsed();
         fs::write(&args[5], &text).unwrap_or_else(|e| fail(format!("{}: {e}", args[5])));
         eprintln!("make_style {:.0} ms ({:.1} MB)", dt.as_secs_f64() * 1e3, text.len() as f64 / 1e6);

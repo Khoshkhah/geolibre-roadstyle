@@ -1,7 +1,7 @@
 {
   "id": "roadstyle",
   "name": "roadstyle",
-  "version": "0.20.1",
+  "version": "0.21.0",
   "entry": "index.js",
   "description": "Draws roads in roadstyle's look (casings, bridges, tunnels, one-way arrows), with road-type filters, 3D buildings, base-map layers and a route planner, from a duckOSM database or a style file that you open in the browser.",
   "engines": ["maplibre"]

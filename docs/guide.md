@@ -17,14 +17,14 @@
 
 ## How it works
 
-<p align="center"><img src="img/how-it-works.svg" alt="The .duckdb file of duckOSM goes to Python in the browser (mapstyle and roadstyle), which makes a style and the planner data. GeoLibre draws the style. The routing code in JavaScript uses the planner data and fills the route panel." width="860"></p>
+<p align="center"><img src="img/how-it-works.svg" alt="The .duckdb file of duckOSM goes to DuckDB and a Rust module in the browser (WebAssembly), which make a style and the planner data. GeoLibre draws the style. The routing code in JavaScript uses the planner data and fills the route panel." width="860"></p>
 
 | Piece | What it does for the plugin |
 |---|---|
 | **[duckOSM](https://github.com/Khoshkhah/duckOSM)** | Builds the `.duckdb` file from OpenStreetMap: the roads of each mode, the allowed turns, the links between walking and driving, and the order in which roads are drawn. |
 | **[mapstyle](https://github.com/Khoshkhah/mapstyle)** | Reads the file and makes the whole map as one style (roads, water, buildings, 3D, crossings…). It also cuts out the data of the route planner. |
 | **[roadstyle](https://github.com/Khoshkhah/roadstyle)** | Draws the roads: casings, bridges, tunnels, one-way arrows, street names. |
-| **The plugin** | Runs mapstyle and roadstyle in the browser (Python in WebAssembly), draws the result in GeoLibre, and adds the Layers rows, the filters and the route planner. |
+| **The plugin** | Reads the file with DuckDB (duckdb-wasm) and makes the map with its Rust module (WebAssembly): the same style that mapstyle and roadstyle make in Python, tested against them. It draws the result in GeoLibre, and adds the Layers rows, the filters and the route planner. |
 
 ## Route planner
 
@@ -75,8 +75,8 @@ pip install mapstyle
 mapstyle monaco.duckdb --inline monaco.json --planner      # 6 seconds; --planner adds the data of the route planner
 ```
 
-In GeoLibre: **roadstyle › Add a roadstyle layer…**, choose `monaco.json`. The map opens in about **1 second**, also for a big area. Opening the `.duckdb` file
-itself makes the same file in the browser, where Python is about 3 times slower: the map is on the screen after about 18 seconds for Monaco, with the street names and arrows added about 10 seconds later (the next time you open the same file, the browser has kept the result).
+In GeoLibre: **roadstyle › Add a roadstyle layer…**, choose `monaco.json`. The map opens in about **1 second**. Opening the `.duckdb` file itself makes the
+same map in the browser: about 7 seconds for Monaco, and about 3 seconds the next time (the browser keeps the result).
 
 **A `style.json` with the data inside** (the same file, from Python):
 
@@ -121,38 +121,46 @@ Each map has three folders. The first is on top, and it is drawn last.
 | Colours | OpenStreetMap (default), Google, Grey, roadstyle default |
 | Footpaths and cycleways | Google, OpenStreetMap, Komoot, CyclOSM |
 | Ocean polygon | off (default: GeoLibre's own map shows the sea), on |
-| 3D bridge decks | off (default), on |
 | Route planner | on (default), off |
 
 ## Speed
 
-Monaco (13,000 roads) in the real GeoLibre. Python in the browser is about three times slower than normal Python, and most of the time is roadstyle's own work (the street names and the arrows are two thirds of it).
+In the real GeoLibre, from a click on **Open** to the finished map:
 
-| | Time |
-|---|---|
-| First open from the `.duckdb` file: the map is on the screen | about 18 s (6 s to start Python, 10 s to make the map) |
-| The street names and arrows are added | about 10 s later, in the background |
-| The same file again, with the same choices (the browser keeps the map) | about 3 s |
-| A style file made with `mapstyle --inline` | under 1 s |
+| | Monaco (13,298 roads) | Tartu (63,965 roads) |
+|---|---|---|
+| First open from the `.duckdb` file | about 7 s | about 24 s |
+| The same file again, with the same choices (the browser keeps the map) | about 3 s | about 12 s |
+| The same file with other choices | about 4 s | about 20 s |
+| A style file made with `mapstyle --inline` | under 1 s | |
 
-Python starts when the dialog opens, and by itself a few seconds after GeoLibre opens if you used the plugin before.
+For Monaco, about 2 s of this is the Rust module and about 2 s is MapLibre drawing the map. DuckDB and the Rust module start when the dialog opens, and by
+themselves a few seconds after GeoLibre opens if you used the plugin before. Version 0.20 made the map with Python in the browser: about 18 s for Monaco, and
+Tartu failed.
 
 ## Needs
 
-- A browser with enough memory: the `.duckdb` file is read into memory twice.
-- The network: the plugin loads Pyodide and its packages (numpy, pandas, shapely, geopandas, DuckDB and a few more) from `cdn.jsdelivr.net`, a pinned version (Pyodide 314.0.7).
-  Nothing is installed from PyPI at run time: the roadstyle, mapstyle and branca code is inside the plugin (roadstyle 0.24.2, mapstyle 0.12.0, branca 0.8.2). The code of the zip is
-  minified; the readable source is in this repository.
+- A browser with enough memory. The map is made in the browser's memory: Tartu (63,965 roads) needs about 2 GB. The plugin makes the map of an area with
+  at most 100,000 roads; for a bigger area it says so.
+- The network: the plugin loads DuckDB (duckdb-wasm 1.33.1-dev57.0, about 7 MB, once) from `cdn.jsdelivr.net`. The Rust module and the looks of the dialog's
+  choices are inside the plugin (made with roadstyle 0.24.3 and mapstyle 0.12.0). The code of the zip is minified; the readable source is in this repository
+  (`index.js`, `worker/`, `wasm/`).
+- No 3D bridge decks from a database (until a new version of them).
 
 ## Build and test
 
 ```bash
-pip install roadstyle mapstyle
-python build.py                                    # makes dist/roadstyle-geolibre.zip
-python -m pytest tests -q -m "not slow"            # a few seconds, in a stand-in for GeoLibre
-python tests/e2e_geolibre.py monaco.duckdb         # the real web.geolibre.app, with a database (minutes)
-python tests/e2e_inputs.py monaco.duckdb           # the real web.geolibre.app, with a style URL and a tiles export
+python -m venv .venv && .venv/bin/pip install "roadstyle[tiles]==0.24.3" mapstyle==0.12.0 pytest playwright
+.venv/bin/python build.py                          # map/ and dist/roadstyle-geolibre.zip (needs cargo with wasm32, wasm-bindgen 0.2.129, npx)
+.venv/bin/python -m pytest tests -q                # in a stand-in for GeoLibre; RS_TEST_DB=monaco.duckdb also makes a map
+.venv/bin/python tests/e2e_geolibre.py monaco.duckdb   # the real web.geolibre.app, with a database (minutes)
+.venv/bin/python tests/e2e_maps.py monaco.duckdb       # the real web.geolibre.app: three opens, the times
+.venv/bin/python tests/e2e_inputs.py monaco.duckdb     # the real web.geolibre.app, with a style URL and a tiles export
+.venv/bin/python -m pytest spike -q                # the Rust style against mapstyle's (the golden files of tools/make_spike_fixture.py)
 ```
+
+The Rust module follows roadstyle 0.24.3 and mapstyle 0.12.0: `build.py` refuses other versions. The golden tests in `spike/` compare its style with
+mapstyle's `export_inline` for 16 choices of the dialog (docs/design/rust-spike.md).
 
 Change `version` in `plugin.json` and in `index.js` together (a test checks that they are equal). GeoLibre trusts a plugin by the hash of
 its files: after a change, remove the plugin and install the new `.zip`.

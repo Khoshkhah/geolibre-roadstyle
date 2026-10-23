@@ -31,7 +31,7 @@ PKG, build = _s4.PKG, _s4.build
 
 def run(db, times_only=False):
     with tempfile.TemporaryDirectory() as tmp:
-        for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (HERE / "roads_sql.js", "roads_sql.js"), (HERE / "features_sql.js", "features_sql.js"), (HERE / "planner_sql.js", "planner_sql.js"),
+        for src, name in ((HERE / "index.html", "index.html"), (HERE / "worker.js", "worker.js"), (SPIKE.parent / "worker" / "roads_sql.js", "roads_sql.js"), (SPIKE.parent / "worker" / "features_sql.js", "features_sql.js"), (SPIKE.parent / "worker" / "planner_sql.js", "planner_sql.js"),
                           (PKG, "pkg"), (DATA / "look.json", "look.json"), (Path(db).resolve(), "map.duckdb")):
             os.symlink(src, Path(tmp) / name)
 

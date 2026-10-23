@@ -11,7 +11,7 @@ let disposeMenu = null;
 let popup = null;
 let hover = null;            // {source, sourceLayer, id}
 
-const VERSION = "0.20.1";            // the same as plugin.json (tests/test_plugin.py checks it)
+const VERSION = "0.21.0";            // the same as plugin.json (tests/test_plugin.py checks it)
 const map = () => (app && app.getMap ? app.getMap() : null);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -261,7 +261,8 @@ async function addStyle(url) {
 // a roadstyle style (export_style's style.json, or export_inline's style with the data inside) as GeoLibre rows
 // roadstyle's export, adjusted for GeoLibre's map (these two belong in roadstyle's export_style; remove them when it has them)
 // The groups of a style (metadata roadstyle:group) and what the plugin does with them. Three parts in GeoLibre's Layers panel: Background (drawn
-// under the roads), Roads, Features (over the roads). Two groups are left out unless the user chooses them in the dialog (opts.ocean, opts.decks):
+// under the roads), Roads, Features (over the roads). Two groups are left out unless they are chosen (opts.ocean, opts.decks; the dialog has had no decks
+// choice since 0.21.0: a database's map has no decks, and a style file's decks stay out):
 // the ocean polygon (the blue sea of the mapstyle page: over GeoLibre's own map it looks like a blue land background) and the 3D bridge decks
 // (roadstyle's export draws them as blocks at 0.7 opacity, and the water shows through). GeoLibre ignores the starting visibility of a row, so a
 // row cannot start switched off: a group that starts off would show at once. Every other group, also those that the mapstyle page starts hidden
@@ -469,36 +470,6 @@ async function addStyleObject(style, url, kind = "style", opts = {}) {
   if (meta["roadstyle:planner"]) await setupPlanner(entry, meta["roadstyle:planner"], kind);
   else if (meta["roadstyle:planner_skipped"]) notify("The database has " + meta["roadstyle:planner_skipped"] + " roads: too many for the route planner in the browser.", "warn");
   return entry;
-}
-// The street names and the one-way arrows are two thirds of the work of making a map, so Python makes them after the first picture
-// (mapstyle's export_inline arrows=False, labels=False, then the whole style again): they come as extra layers, in a row "names and arrows" of the Roads folder.
-async function addAnnotations(entry, ex) {
-  const m = map();
-  if (!m || !added.includes(entry)) return;                          // the map was removed meanwhile
-  const prefix = entry.prefix, tmp = {layers: ex.layers, sources: ex.sources, metadata: {}};
-  arrange(tmp, entry.opts || {});
-  fixExport(tmp);
-  const own = ex.images || {};
-  await addImages(m, Object.fromEntries(Object.entries(own).map(([n, v]) => [prefix + n, v])));
-  for (const [id, src] of Object.entries(tmp.sources)) if (!m.getSource(prefix + id)) { m.addSource(prefix + id, src); entry.sourceIds.push(prefix + id); }
-  Object.keys(own).forEach((n) => entry.imageIds.push(prefix + n));
-  const font = baseFont(m), ids = [];
-  for (const l of tmp.layers) {
-    const before = ex.before[l.id] && m.getLayer(prefix + ex.before[l.id]) ? prefix + ex.before[l.id] : undefined;
-    const id = addStyleLayer(m, l, prefix, own, font, before);
-    ids.push(id); entry.layerIds.push(id);
-    if (roadGroupsOf(l)) entry.roadLayers.push({id, filter: l.filter || null, g: groupOf(l)});
-  }
-  setRoadFilters(m, entry); setRoadOpacity(m, entry);                 // the road types that are switched off, and the opacity, apply to them too
-  if (app.registerExternalNativeLayer && ids.length) {
-    const rowId = prefix + "annotations";
-    app.registerExternalNativeLayer({id: rowId, name: "names and arrows", type: "vector", nativeLayerIds: ids, sourceIds: [], opacity: 1, style: {}, metadata: {url: entry.url, group: "names and arrows"},
-      visible: true, paintMode: "plugin",
-      paintBridge: {setVisibility: (v) => ids.forEach((x) => m.getLayer(x) && m.setLayoutProperty(x, "visibility", v ? "visible" : "none"))}});
-    entry.rowIds.push(rowId);
-    if (app.moveLayersToGroup && entry.roadsGroup) try { app.moveLayersToGroup([rowId], entry.roadsGroup); } catch (e) { console.warn("roadstyle: the row of the names and arrows stays outside the Roads folder:", e); }
-  }
-  console.info("roadstyle: the street names and the arrows are on the map");
 }
 const roadGroupsOf = (l) => ["roads", DECKS].includes(groupOf(l));
 
@@ -747,17 +718,17 @@ function removeKind(kind) {            // the maps of one kind (a database's map
 
 const fail = (e) => notify(String((e && e.message) || e));
 
-// the plugin's own files (looks, py/worker.js, py/pkgs.zip, popup.css / popup.js): by their URL when GeoLibre gives one (a plugin installed by its
+// the plugin's own files (looks, map/worker.js, map/pkgs.bin, popup.css / popup.js): by their URL when GeoLibre gives one (a plugin installed by its
 // manifest URL); a plugin installed from a .zip has none, so the zip's index.js carries them (write_plugin_zip fills ASSETS)
 const ASSETS = /*__ASSETS__*/null;
-const TYPES = {js: "text/javascript", css: "text/css", html: "text/html", json: "application/json", zip: "application/zip"};
+const TYPES = {js: "text/javascript", css: "text/css", html: "text/html", json: "application/json", bin: "application/octet-stream"};
 const blobs = {};                                  // a file of the .zip as a blob URL, made once
 function asset(f) {
   const url = app.resolvePluginAssetUrl && app.resolvePluginAssetUrl(ID, f);
   if (url) return url;
   if (ASSETS && f in ASSETS) {
     if (!blobs[f]) {
-      const ext = f.split(".").pop(), body = ext === "zip" ? Uint8Array.from(atob(ASSETS[f]), (c) => c.charCodeAt(0)) : ASSETS[f];   // a zip as base64
+      const ext = f.split(".").pop(), body = ext === "bin" ? Uint8Array.from(atob(ASSETS[f]), (c) => c.charCodeAt(0)) : ASSETS[f];   // a binary file as base64
       blobs[f] = URL.createObjectURL(new Blob([body], {type: TYPES[ext]}));
     }
     return blobs[f];
@@ -765,68 +736,69 @@ function asset(f) {
   throw new Error("roadstyle: the plugin has no file " + f + " (install it by its manifest URL, or from the .zip that write_plugin_zip makes)");
 }
 
-// A duckOSM database from your disk: roadstyle and mapstyle make its map in the browser with their own Python code (Pyodide in a
-// worker, py/worker.js; no server, no export), so it is the map of their pages; the plugin adds the style it makes as rows.
+// A duckOSM database from your disk: its map is made in the browser by DuckDB (duckdb-wasm) and the Rust module (wasm/), in a worker
+// (map/worker.js, from worker/; no server, no export). It is the map of mapstyle's pages (docs/design/rust-spike.md: the same style as
+// mapstyle.export.export_inline); the plugin adds the style it makes as rows.
 let warmTimer = 0;
-let pyWorker = null, pyReady = false, working = null;      // working: {cancel} while a map is being made
+let mapWorker = null, workerReady = false, working = null;      // working: {cancel} while a map is being made
 function stopWorker() {
-  if (pyWorker) pyWorker.terminate();
-  pyWorker = null; pyReady = false;
+  if (mapWorker) mapWorker.terminate();
+  mapWorker = null; workerReady = false;
 }
 // one map at a time; Cancel stops the worker (the next map starts a new one)
 async function ensureWorker() {
-  if (!pyWorker)                                     // a worker from a blob: GeoLibre's page cannot start one from another address
-    pyWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("py/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
-  return pyWorker;
+  if (!mapWorker)                                     // a worker from a blob: GeoLibre's page cannot start one from another address
+    mapWorker = new Worker(URL.createObjectURL(new Blob([await (await fetch(asset("map/worker.js"))).text()], {type: "text/javascript"})), {type: "module"});
+  return mapWorker;
 }
-// Python (Pyodide and its packages) takes the first 10 to 30 seconds: it starts when the dialog opens, while the user chooses the file.
+// DuckDB and the Rust module start when the dialog opens, while the user chooses the file (the first time duckdb-wasm, about 7 MB, comes from the CDN).
 async function warmUp() {
-  if (pyReady || pyWorker) return;
+  if (workerReady || mapWorker) return;
   try {
     const w = await ensureWorker();
-    w.onmessage = ({data}) => { if (data.ready) pyReady = true; };
+    w.onmessage = ({data}) => { if (data.ready) workerReady = true; };
     w.onerror = () => stopWorker();
-    w.postMessage({warm: true, pkgs: await (await fetch(asset("py/pkgs.zip"))).arrayBuffer()});
+    w.postMessage({warm: true, pkgs: await (await fetch(asset("map/pkgs.bin"))).arrayBuffer()});
   } catch (e) { console.warn("roadstyle: the warm-up failed:", e); stopWorker(); }
 }
-// The style of a database that was opened before (the same file, the same choices) comes from the browser's own storage: no Python needed.
+// The style of a database that was opened before (the same file, the same choices) comes from the browser's own storage.
 const IDB = {
   open: () => new Promise((ok, no) => { const r = indexedDB.open("roadstyle-cache", 1); r.onupgradeneeded = () => r.result.createObjectStore("styles"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }),
-  async get(k) { const db = await this.open(); return new Promise((ok) => { const q = db.transaction("styles").objectStore("styles").get(k); q.onsuccess = () => ok(q.result && q.result.style); q.onerror = () => ok(undefined); }); },
+  async get(k) {
+    const db = await this.open();
+    const s = await new Promise((ok) => { const q = db.transaction("styles").objectStore("styles").get(k); q.onsuccess = () => ok(q.result && q.result.style); q.onerror = () => ok(undefined); });
+    return s instanceof Blob ? s.text() : s;
+  },
   async put(k, style) {
     const db = await this.open();
     const all = await new Promise((ok) => { const q = db.transaction("styles").objectStore("styles").openCursor(), rows = []; q.onsuccess = () => { const c = q.result; if (c) { rows.push([c.key, c.value.t]); c.continue(); } else ok(rows); }; q.onerror = () => ok([]); });
     return new Promise((ok) => {
       const t = db.transaction("styles", "readwrite"), st = t.objectStore("styles");
       all.sort((a, b) => b[1] - a[1]).slice(2).forEach(([key]) => st.delete(key));                 // keep the last three
-      st.put({t: Date.now(), style}, k);
+      st.put({t: Date.now(), style: new Blob([style], {type: "application/json"})}, k);    // a Blob: Chrome refuses a value over about 130 MB (Tartu's style is 226 MB)
       t.oncomplete = () => ok(true); t.onerror = t.onabort = () => ok(false);
     });
   },
 };
-// Makes the style of a database. Returns {style, extra}: the style to draw now, and (a promise, or null) the street names and arrows that come later.
+// Makes the style of a database (JSON text).
 function makeStyle(file, box, opts) {
   return new Promise(async (done, fail_) => {
     working = {cancel: () => { stopWorker(); fail_(new Error("cancelled")); }};      // Cancel works from the first moment
     try {
       const key = [VERSION, file.name, file.size, file.lastModified, opts.mode, opts.theme, opts.paths, opts.planner !== "off"].join("|");
       const cached = await IDB.get(key).catch(() => undefined);
-      if (cached) { box.say("the map from the browser's storage"); return done({style: cached, extra: null}); }
-      if (!pyReady) box.say("loading Python, roadstyle and mapstyle (the first time about 30 s)");
+      if (cached) { box.say("the map from the browser's storage"); return done(cached); }
+      if (!workerReady) box.say("starting DuckDB and the Rust module");
       const w = await ensureWorker(), msg = {db: await file.arrayBuffer(), name: file.name.replace(/\.duckdb$/i, ""),
-                                 opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths, planner: opts.planner !== "off", split: true}};
-      if (!pyReady) msg.pkgs = await (await fetch(asset("py/pkgs.zip"))).arrayBuffer();     // until the worker said it is ready
-      let gotExtra;
-      const extra = new Promise((ok) => { gotExtra = ok; });
+                                 opts: {mode: opts.mode, theme: opts.theme, paths: opts.paths, planner: opts.planner !== "off"}};
+      if (!workerReady) msg.pkgs = await (await fetch(asset("map/pkgs.bin"))).arrayBuffer();     // until the worker said it is ready
       w.onmessage = ({data}) => {
         if (data.step) box.say(data.step);
-        else if (data.ready) pyReady = true;
-        else if (data.error) { if (!pyReady) stopWorker(); fail_(new Error("the map of " + file.name + " failed: " + data.error)); }
-        else if (data.extraError) { console.warn("roadstyle: the street names and arrows failed:", data.extraError); gotExtra(null); }
-        else if (data.extra) { IDB.put(key, data.full).catch(() => false); gotExtra(JSON.parse(data.extra)); }       // the whole style is kept for the next time
-        else done({style: data.style, extra});
+        else if (data.ready) workerReady = true;
+        else if (data.error) { if (!workerReady) stopWorker(); fail_(new Error("the map of " + file.name + " failed: " + data.error)); }
+        else { IDB.put(key, data.style).catch(() => false); done(data.style); }        // kept for the next time
       };
-      w.onerror = (e) => { stopWorker(); fail_(new Error("the Python worker failed: " + (e.message || "it could not start"))); };
+      w.onerror = (e) => { stopWorker(); fail_(new Error("the map worker failed: " + (e.message || "it could not start"))); };
       w.postMessage(msg, [msg.db, ...(msg.pkgs ? [msg.pkgs] : [])]);
     } catch (e) { stopWorker(); fail_(e); }
   });
@@ -840,22 +812,20 @@ const dbFields = (file, o) => [
   pick("theme", "Colours", [["osm", "OpenStreetMap"], ["google", "Google"], ["grey", "Grey"], ["roadstyle", "roadstyle default"]], o.theme),
   pick("paths", "Footpaths and cycleways", [["google", "Google (calm lines)"], ["osm", "OpenStreetMap (dotted)"], ["komoot", "Komoot (bold)"], ["cyclosm", "CyclOSM (blue)"]], o.paths),
   pick("ocean", "Ocean polygon (the blue sea)", [["off", "Off: GeoLibre's own map shows the sea"], ["on", "On, as the mapstyle page"]], o.ocean),
-  pick("decks", "3D bridge decks", [["off", "Off"], ["on", "On"]], o.decks),
   pick("planner", "Route planner", [["on", "On: drop a start and an end on the map"], ["off", "Off"]], o.planner),
 ];
 let lastDb = null;                                   // {file, opts}: "Redraw with other colours" makes the same file again
-const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", ocean: "off", decks: "off", planner: "on"};     // all: the crossings and signals show from their zoom; the page hides them
+const DB_DEFAULTS = {mode: "all", theme: "osm", paths: "google", ocean: "off", planner: "on"};     // all: the crossings and signals show from their zoom; the page hides them
 
 async function runDatabase(file, opts) {
   const box = progress("reading " + file.name, () => working && working.cancel());
   try {
-    const {style, extra} = await makeStyle(file, box, opts);
+    const style = await makeStyle(file, box, opts);
     box.say("drawing");
     removeKind("database");                          // the map of the last time goes when the new one is ready
-    const entry = await addStyleObject(JSON.parse(style), file.name, "database", {ocean: opts.ocean === "on", decks: opts.decks === "on"});
+    await addStyleObject(JSON.parse(style), file.name, "database", {ocean: opts.ocean === "on"});      // no 3D bridge decks: the Rust module makes none
     lastDb = {file, opts};
     try { localStorage.setItem("roadstyle-used", "1"); } catch (e) { /* no storage */ }
-    if (extra) extra.then((ex) => ex && addAnnotations(entry, ex)).catch((e) => console.warn("roadstyle: the street names and arrows could not be added:", e));
   } catch (e) {
     if (!(e && e.message === "cancelled")) fail(e);
   } finally {
@@ -865,7 +835,7 @@ async function runDatabase(file, opts) {
 
 async function openDatabase() {
   if (working) return notify("A map is being made: wait for it, or cancel it.", "warn");
-  warmUp();                                          // Python starts now, while the dialog is open
+  warmUp();                                          // DuckDB and the Rust module start now, while the dialog is open
   const r = await ask("Open a duckOSM database", dbFields(true, lastDb ? lastDb.opts : DB_DEFAULTS), "Open");
   if (r) await runDatabase(r.file, r);
 }
@@ -920,7 +890,7 @@ export const plugin = {
                 {id: "remove", label: "Remove roadstyle layers", onSelect: run(removeEverything)}],
       });
     }
-    // Whoever opened a database here before gets Python started in the background a few seconds after GeoLibre opens (it needs 6 s and tens of MB): the next open is quicker.
+    // Whoever opened a database here before gets DuckDB and the Rust module started in the background a few seconds after GeoLibre opens: the next open is quicker.
     try { if (localStorage.getItem("roadstyle-used") === "1") warmTimer = setTimeout(() => warmUp(), 6000); } catch (e) { /* no storage: no early start */ }
   },
   async handleUrlParameters(host, params) {

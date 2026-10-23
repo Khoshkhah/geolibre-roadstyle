@@ -15,6 +15,7 @@ Writes to the output folder:
 Needs mapstyle and roadstyle (the venv of the mapstyle project has them).
 """
 import argparse
+import sys
 import dataclasses
 import inspect
 import json
@@ -22,41 +23,14 @@ from importlib.metadata import version
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE))
+from build import MODES, PATHS, THEMES, _json, look_of  # noqa: E402  the looks are the plugin's own (build.py)
 # the spike scope: no arrows, no street names, no 3D decks, no base-map layers
 ARGS = dict(layers=False, arrows=False, labels=False, view_3d=False)
 
 
 # 16 choices in which each pair of values (mode and theme, mode and paths, theme and paths) occurs once: an orthogonal array OA(16, 3, 4, 2)
-MODES, THEMES, PATHS = ("all", "driving", "walking", "cycling"), ("osm", "google", "grey", "roadstyle"), ("google", "osm", "komoot", "cyclosm")
 CHOICES16 = [(MODES[i], THEMES[j], PATHS[(i + j) % 4]) for i in range(4) for j in range(4)]
-
-
-def _json(o):
-    """numpy values and tuples that json cannot write."""
-    if hasattr(o, "item"):
-        return o.item()
-    if isinstance(o, (set, frozenset, tuple)):
-        return sorted(o, key=str) if isinstance(o, (set, frozenset)) else list(o)
-    raise TypeError(f"{type(o)} is not JSON")
-
-
-def _class_styles(palette, config):
-    """``{"classes": {class: [plain, link]}, "fallback": [plain, link]}``: each class's style as roadstyle's ClassStyler resolves it (no tunnel and
-    no bridge: the web renderer's styler gets no tunnel or bridge column). A pure function of the class, so it is look data, not code to port."""
-    from roadstyle.palettes import FALLBACK, PALETTES
-    from roadstyle.style import _apply
-    from roadstyle.stylers import _dash_str
-
-    table = PALETTES[palette]
-
-    def res(s):
-        out = []
-        for link in (False, True):
-            p = _apply(s, link, False, False, config)
-            out.append({"fill": p.fill, "width": p.width, "casing": p.casing, "casing_width": p.casing_width, "dash": _dash_str(p.dash),
-                        "opacity": p.opacity, "casing_opacity": p.casing_opacity})
-        return out
-    return {"classes": {c: res(s) for c, s in table.items()}, "fallback": res(table.get(FALLBACK) or next(iter(table.values())))}
 
 
 def _pyodide_spatial(con):
@@ -72,33 +46,8 @@ def _pyodide_spatial(con):
     con.execute("CREATE OR REPLACE TEMP MACRO ST_Centroid(g) AS ST_GeomFromWKB(_ms_centroid(ST_AsWKB(g)))")
 
 
-def _theme_features(theme="osm"):
-    """The "features" part of mapstyle's style in the theme's colours (render_map passes load_theme(theme)'s style to feature_overlays)."""
-    from mapstyle.style import load_theme
-    return load_theme(theme)[0]["features"]
-
-
-def _feature_images(theme="osm"):
-    """Every image feature_overlays can put in roadstyle:images (the landcover textures, the point layers' icons), as data URLs: it is run on
-    one placeholder feature per layer, so each layer is present. The Rust code keeps the images of the layers a map has."""
-    from mapstyle.map import feature_overlays
-    from mapstyle.style import load_style, load_theme
-    specs = [s for s in load_style("layers")["layers"] if s.get("show", True) and not s.get("merge_into")]
-    fake = {s["name"]: {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"kind": "x"}, "geometry": None}]} for s in specs}
-    return feature_overlays(fake, None, load_theme(theme)[0])[1]["images"]
-
-
-def _oneway_image():
-    """The arrow icon roadstyle's export_inline puts in roadstyle:images (the sprite, an SDF image at the profile's pixel ratio)."""
-    import base64
-    from importlib.resources import files
-    from roadstyle import _settings
-    png = files("roadstyle").joinpath("data/sprite.png").read_bytes()
-    return {"url": "data:image/png;base64," + base64.b64encode(png).decode(), "sdf": True, "pixelRatio": _settings.theme_value("arrows.icon")["pixel_ratio"]}
-
-
 def features_parquet(db, specs, path):
-    """The base-map tables of mapstyle.map.load_layers as one Parquet file, as the worker writes it (spike/worker/features_sql.js, the same SQL):
+    """The base-map tables of mapstyle.map.load_layers as one Parquet file, as the worker writes it (worker/features_sql.js, the same SQL):
     a row per feature with the layer's index in layers.yaml (``spec``), its name (``layer``, or the one it is merged into), ``osm_id``, ``kind``,
     ``name``, ``bearing``, the tags of a building's height (``levels``, ``height``) and the geometry as WKB, in the order load_layers reads them."""
     import duckdb
@@ -138,7 +87,7 @@ def features_parquet(db, specs, path):
 
 
 def planner_parquet(db, path):
-    """The tables of mapstyle.map.planner_data as one Parquet file, as the worker writes it (spike/worker/planner_sql.js, the same SQL): a row per
+    """The tables of mapstyle.map.planner_data as one Parquet file, as the worker writes it (worker/planner_sql.js, the same SQL): a row per
     record with its ``part`` and the order Python reads it in (``grp``, ``ord``: the reading order of a table or view). Parts: ``mode`` (a mode with edges and edge_graph), ``end`` (an
     edge's nodes, length and junction: edges then private_edges, each mode in order), ``graph`` (a mode's edges by edge_id), ``next`` (a mode's turns,
     its own rows where edge_graph has ``uses``), ``mm`` (walk + drive is there), ``mme`` / ``mmt`` (mm.edges, mm.transfers)."""
@@ -173,50 +122,6 @@ def planner_parquet(db, path):
         parts.append("SELECT 'mmt' AS part, 0 AS grp, row_number() OVER () AS ord, * FROM (SELECT node_id AS s, from_mode AS fm, to_mode AS tm, "
                      "CAST(cost_s AS DOUBLE) AS cost FROM mm.transfers)")
     con.execute(f"COPY ({' UNION ALL BY NAME '.join(parts)} ORDER BY part, grp, ord) TO '{Path(path).resolve()}' (FORMAT parquet)")
-
-
-def look_of(db, mode="all", theme="osm", paths="google"):
-    """The resolved look of one choice of the plugin's dialog (render_map's mode, theme and paths), and the roads as roadstyle gets them."""
-    import roadstyle as rs
-    from mapstyle.map import render_map
-    from mapstyle.style import load_style
-    from roadstyle import _settings
-    from roadstyle import render_web as rw
-
-    got = {}
-
-    def grab(roads, palette, settings, kw, config):    # what mapstyle gives to rs.export_inline
-        got.update(roads=roads, palette=palette, settings=settings, kw=kw)
-        return None
-
-    render_map(db, mode, _export=grab, theme=theme, paths=paths, **ARGS)
-    settings, kw = got["settings"], got["kw"]
-    prev = list(_settings._EXTRA)                      # the look as render_edges applies it: the settings over the ones in force
-    rs.use_settings(*prev, settings)
-    try:
-        theme_rs, config = _settings.theme(), dataclasses.asdict(rw.CONFIG)
-        styles = _class_styles(got["palette"], rw.CONFIG)
-        head_m = inspect.signature(rw.render).parameters["head_m"].default
-        # S6: a slot's rank (the z_order table) and how far a name keeps from a crossing road (its drawn width at zoom 20, _crossing_half_m)
-        slots_look = {"z_order": dict(rw.ROAD_Z), "width_z20": {c: rw.class_width_px(c, 20) for c in rw._CLASSES},
-                      "width_z20_fallback": rw.class_width_px(None, 20)}
-        roads_model = _settings.roads()        # step 2 of the full port: the road tables the layer builders read (render_web._load_road_model)
-        # the page metadata of the export: roadstyle:interaction's road popup fields and hover delay (render's defaults)
-        interaction = {"popup": list(rw.DEFAULT_ROAD_POPUP), "hover_delay_ms": inspect.signature(rw.render).parameters["hover_delay_ms"].default}
-        oneway = _oneway_image()
-    finally:
-        rs.use_settings(*prev)
-    look = {"palette": got["palette"], "settings": settings,
-            "args": {k: v for k, v in kw.items() if k != "overlays"},      # name, tooltip, level columns, ... (the overlays are the base map)
-            "theme": theme_rs, "config": config,
-            # what the Rust code reads (S2): the class styles as the styler resolves them, and the render's defaults
-            "styles": styles, "head_m": head_m, "slots": slots_look, "roads_model": roads_model,
-            # step 3 of the full port: the base-map layers (mapstyle's styles/layers.yaml and the 3D heights of load_layers), the look of
-            # feature_overlays (the theme's "features" style) and its images, and the arrow image of roadstyle's export
-            "features": {"layers_yaml": load_style("layers"), "buildings_3d": load_style()["features"]["buildings_3d"],
-                         "style": _theme_features(theme), "images": _feature_images(theme)},
-            "oneway_image": oneway, "interaction": interaction}
-    return json.loads(json.dumps(look, default=_json)), got["roads"]
 
 
 def write_choices(db, out):

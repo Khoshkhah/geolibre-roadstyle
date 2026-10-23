@@ -7,8 +7,8 @@ that gives the test the map), open a database through the plugin's dialog, and c
 
 Needs the network, playwright, duckdb and a few minutes.
 
-    python build.py --zip
-    python tests/e2e_geolibre.py /path/to/monaco.duckdb [screenshots-folder]
+    .venv/bin/python build.py
+    .venv/bin/python tests/e2e_geolibre.py /path/to/monaco.duckdb [screenshots-folder]
 """
 import os
 import io
@@ -86,20 +86,14 @@ def main(db, out=None):
         pg.set_input_files("[role=dialog] input[type=file]", str(db))
         if os.environ.get("RS_THEME"):                        # the colours choice, for example RS_THEME=roadstyle
             pg.select_option("[role=dialog] select >> nth=1", os.environ["RS_THEME"])
-        assert pg.eval_on_selector_all("[role=dialog] select", "(ss) => ss.map((s) => s.value)")[3:] == ["off", "off", "on"]      # the defaults: no ocean polygon, no 3D bridge decks, the route planner on
+        assert pg.eval_on_selector_all("[role=dialog] select", "(ss) => ss.map((s) => s.value)")[3:] == ["off", "on"]      # the defaults: no ocean polygon, the route planner on
         pg.click("[role=dialog] button[type=submit]")
         pg.wait_for_selector(".rs-pl-progress", timeout=20000)
         pg.wait_for_selector(".rs-pl-progress", state="detached", timeout=400000)
         pg.wait_for_timeout(8000)
 
-        # 0) the street names and the arrows come after the first picture (a second pass of Python): wait for them
-        t_names = time.time()
-        pg.wait_for_function("() => window.__rs.map.getLayer('rs0-roads-arrows') != null", timeout=240000)
-        print("the street names and arrows came", round(time.time() - t_names, 1), "s after the map was drawn and the first checks")
-        pg.wait_for_timeout(3000)
-        names_row = pg.evaluate("() => window.__rs.app.listLayers().map((l) => l.name).filter((n) => n === 'names and arrows').length")
-        print("row 'names and arrows':", names_row)
-        assert names_row == 1, names_row
+        # 0) the street names and the arrows are in the map from the start (one style from the Rust module)
+        assert pg.evaluate("() => ['rs0-roads-arrows', 'rs0-roads-labels'].every((id) => window.__rs.map.getLayer(id) != null)")
 
         # 1) the arrows: roadstyle's own image, not the base map's
         arrows = pg.evaluate("""() => { const m = window.__rs.map, id = m.getLayoutProperty('rs0-roads-arrows', 'icon-image'), i = m.getImage(id);

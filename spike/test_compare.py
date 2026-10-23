@@ -33,8 +33,8 @@ def test_rust_style_equals_golden(tmp_path):
     here, data = Path(__file__).parent, Path(__file__).parent / "data"
     if not (data / "golden.json").exists() or shutil.which("cargo") is None:
         return
-    exe = here / "rust" / "target" / "release" / "roadstyle-spike"
-    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
+    exe = here.parent / "wasm" / "target" / "release" / "roadstyle-wasm"
+    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here.parent / "wasm", check=True)
     out = tmp_path / "made.json"
     subprocess.run([str(exe), str(data / "look.json"), str(data / "roads.parquet"), str(data / "features.parquet"), str(data / "planner.parquet"),
                     str(out)], check=True)
@@ -63,8 +63,8 @@ def test_rust_style_equals_golden_for_16_choices(tmp_path):
     here, data = Path(__file__).parent, Path(__file__).parent / "data"
     if not (data / "looks.json").exists() or shutil.which("cargo") is None:
         return
-    exe = here / "rust" / "target" / "release" / "roadstyle-spike"
-    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
+    exe = here.parent / "wasm" / "target" / "release" / "roadstyle-wasm"
+    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here.parent / "wasm", check=True)
     pack, bad = json.loads((data / "looks.json").read_text()), {}
     for g in sorted((data / "choices").glob("*.json.gz")):
         m, t, p = g.name[:-len(".json.gz")].split("_")
@@ -83,8 +83,8 @@ def test_rust_layers_equal_golden_for_every_subset():
     here, data = Path(__file__).parent, Path(__file__).parent / "data" / "layers"
     if not data.exists() or shutil.which("cargo") is None:
         return
-    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
-    exe = here / "rust" / "target" / "release" / "roadstyle-spike"
+    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here.parent / "wasm", check=True)
+    exe = here.parent / "wasm" / "target" / "release" / "roadstyle-wasm"
     subsets = sorted(p for p in data.iterdir() if (p / "golden.json").exists())
     assert len(subsets) == 12
     for d in subsets:
@@ -100,8 +100,8 @@ def test_rust_base_map_sources_equal_golden():
     here, data = Path(__file__).parent, Path(__file__).parent / "data"
     if not (data / "features.parquet").exists() or shutil.which("cargo") is None:
         return
-    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here / "rust", check=True)
-    fcs = json.loads(subprocess.run([str(here / "rust" / "target" / "release" / "roadstyle-spike"), "--features", str(data / "look.json"),
+    subprocess.run(["cargo", "build", "--release", "--offline", "-q"], cwd=here.parent / "wasm", check=True)
+    fcs = json.loads(subprocess.run([str(here.parent / "wasm" / "target" / "release" / "roadstyle-wasm"), "--features", str(data / "look.json"),
                                      str(data / "features.parquet")], capture_output=True, text=True, check=True).stdout)
     golden = json.loads((data / "golden_full.json").read_text())["sources"]
     strip = lambda fs: [{"properties": {k: v for k, v in f["properties"].items() if k != "edge_id" and not k.startswith("__rs_")},  # noqa: E731

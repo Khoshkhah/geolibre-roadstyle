@@ -1,6 +1,7 @@
 out/
 __pycache__/
 spike/data/
-spike/rust/target/
+wasm/target/
 spike/profile/browser_result.json
-dist/roadstyle-rust-preview.zip
+map/
+.venv/

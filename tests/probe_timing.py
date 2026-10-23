@@ -37,7 +37,7 @@ def main(db, planner="on"):
             pg.get_by_text("Open a duckOSM database", exact=False).first.click()
             pg.wait_for_selector("[role=dialog] input[type=file]")
             pg.set_input_files("[role=dialog] input[type=file]", str(db))
-            pg.select_option("[role=dialog] select >> nth=5", planner)
+            pg.select_option("[role=dialog] select >> nth=4", planner)
             t0 = time.time()
             pg.click("[role=dialog] button[type=submit]")
             pg.wait_for_selector(".rs-pl-progress", timeout=20000)
@@ -51,8 +51,6 @@ def main(db, planner="on"):
             # the map is drawn: MapLibre idle
             pg.wait_for_function("() => window.__rs.map.loaded()", timeout=300000)
             steps.append((round(time.time() - t0, 1), "map idle (all data on the screen)"))
-            pg.wait_for_function("() => window.__rs.map.getStyle().layers.some((l) => /roads-arrows$/.test(l.id))", timeout=240000)
-            steps.append((round(time.time() - t0, 1), "street names and arrows added"))
             for t, s in steps:
                 print(f"{t:7.1f} s  {s}")
             print("planner:", planner, "| total", steps[-1][0], "s")

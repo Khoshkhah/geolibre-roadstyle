@@ -1,9 +1,9 @@
 [package]
-name = "roadstyle-spike"
+name = "roadstyle-wasm"
 version = "0.0.1"
 edition = "2021"
 license = "MIT"
-description = "Spike: the roads of the roadstyle style in Rust (docs/design/rust-spike.md)"
+description = "The roadstyle plugin's map of a duckOSM database, in Rust (docs/design/rust-spike.md)"
 
 [lib]
 crate-type = ["cdylib", "rlib"]     # cdylib: the wasm module; rlib: the native program (main.rs)

@@ -3,7 +3,7 @@
 // spike crate) makes the style from them: the roads, their layers (step 2), the base map (step 3) and the route planner's data (step 4).
 // The look still comes from Python at build time (look.json).
 // Message in: {db: ArrayBuffer, look: string}. Out: {style, parquet, times} or {error}.
-import init, {makeStyle, memoryBytes} from "./pkg/roadstyle_spike.js";
+import init, {makeStyle, memoryBytes} from "./pkg/roadstyle_wasm.js";
 import {writeRoads} from "./roads_sql.js";
 import {writeFeatures} from "./features_sql.js";
 import {writePlanner} from "./planner_sql.js";

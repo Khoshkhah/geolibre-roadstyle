@@ -1,10 +1,10 @@
-"""The Rust preview in the real GeoLibre (https://web.geolibre.app), in a headless browser: install dist/roadstyle-rust-preview.zip and the probe
-plugin (tests/probe: it gives the test the map), open a database through the preview's dialog with the default choices, and check the map: the
-road layers and the names and arrows come in one style, the base-map rows are there, the route planner draws a route. Prints the time from the
-click on Open to the map.
+"""The plugin's map of a database in the real GeoLibre (https://web.geolibre.app), in a headless browser: install dist/roadstyle-geolibre.zip
+and the probe plugin (tests/probe: it gives the test the map), open a database through the plugin's dialog three times (the first map, the
+same again from the browser's storage, other choices), and check the map: the road layers and the names and arrows come in one style, the
+base-map rows are there, the route planner draws a route (and Walk + drive, when the database has it). Prints the times.
 
-    mapstyle/.venv/bin/python spike/plugin/build_preview.py
-    mapstyle/.venv/bin/python spike/plugin/e2e_preview.py monaco.duckdb [screenshots-folder]
+    .venv/bin/python build.py
+    .venv/bin/python tests/e2e_maps.py monaco.duckdb [screenshots-folder]      # or a bigger area (Tartu: about 64,000 roads)
 
 Needs the network (web.geolibre.app, jsdelivr), playwright and a few minutes."""
 import sys
@@ -14,14 +14,13 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(ROOT / "tests"))
-from e2e_geolibre import activate, probe_zip  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from e2e_geolibre import ZIP, activate, probe_zip  # noqa: E402
 
-ZIP = ROOT / "dist" / "roadstyle-rust-preview.zip"
+MENU = "roadstyle"
 
 
-def open_db(pg, db, menu="roadstyle (Rust)", choose=None):
+def open_db(pg, db, menu=MENU, choose=None):
     """The plugin's menu > Open a duckOSM database, with the dialog's choices (mode, theme, paths: None keeps the dialog's); returns the seconds
     from the click on Open to the map (MapLibre idle) and the steps of the progress box."""
     pg.get_by_role("button", name=menu).first.click()
@@ -66,7 +65,7 @@ def main(db, out=None):
             pg.wait_for_timeout(3500)
         pg.locator("[role=dialog] button", has_text="Close").last.click()
         pg.wait_for_timeout(800)
-        activate(pg, "roadstyle (Rust preview)")
+        activate(pg, "roadstyle")
         activate(pg, "rs-probe")
         assert pg.evaluate("() => !!(window.__rs && window.__rs.map)"), "the probe has no map"
 
@@ -90,14 +89,14 @@ def main(db, out=None):
         print("walk + drive (s, m):", wd)                          # Shortest: shorter; Fastest: faster
         if out:
             Path(out).mkdir(parents=True, exist_ok=True)
-            pg.screenshot(path=str(Path(out) / "rust_preview.png"))
+            pg.screenshot(path=str(Path(out) / "map.png"))
         print("page errors:", errors[-5:], "| console errors and warnings:", said[-8:])
         assert info["simple"] and info["arrows"] and info["labels"] and info["base"] > 0, info
         assert pl["dom"] and pl["pins"] == 2 and pl["route"] and drawn > 0, (pl, drawn)
 
         def again(choose, label):
             print(label)
-            pg.get_by_role("button", name="roadstyle (Rust)").first.click()
+            pg.get_by_role("button", name=MENU).first.click()
             pg.get_by_text("Remove roadstyle layers", exact=False).first.click()
             pg.wait_for_timeout(2000)
             t, steps = open_db(pg, db, choose=choose)

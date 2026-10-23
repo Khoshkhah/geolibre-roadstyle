@@ -20,7 +20,7 @@ from playwright.sync_api import sync_playwright
 
 HERE = Path(__file__).resolve().parent
 SPIKE = HERE.parent
-CRATE = SPIKE / "rust"
+CRATE = SPIKE.parent / "wasm"
 PKG = CRATE / "target" / "pkg"
 DATA = SPIKE / "data"
 
@@ -28,7 +28,7 @@ DATA = SPIKE / "data"
 def build():
     subprocess.run(["cargo", "build", "--release", "--offline", "--target", "wasm32-unknown-unknown", "--lib", "-q"], cwd=CRATE, check=True)
     subprocess.run(["wasm-bindgen", "--target", "web", "--out-dir", str(PKG),
-                    str(CRATE / "target" / "wasm32-unknown-unknown" / "release" / "roadstyle_spike.wasm")], check=True)
+                    str(CRATE / "target" / "wasm32-unknown-unknown" / "release" / "roadstyle_wasm.wasm")], check=True)
 
 
 def run(runs):

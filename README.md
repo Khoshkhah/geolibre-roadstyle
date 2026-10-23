@@ -22,7 +22,7 @@
 The plugin draws roads with casings, bridges, tunnels and one-way arrows, with 3D buildings and base-map layers, over GeoLibre's own map. The map
 is made in the browser from a duckOSM database or a style file. No server is needed.
 
-> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.20.1)
+> ## Download: [roadstyle-geolibre.zip](https://github.com/Khoshkhah/geolibre-roadstyle/releases/latest/download/roadstyle-geolibre.zip) (version 0.21.0)
 >
 > 1. In GeoLibre: **Settings › Manage Plugins › Settings › Install from file**. Choose the `.zip`.
 > 2. **Plugins › Installed › roadstyle** makes the plugin active.
@@ -38,7 +38,7 @@ is made in the browser from a duckOSM database or a style file. No server is nee
 
 1. Download [monaco.duckdb](https://github.com/Khoshkhah/duckOSM/releases/download/v0.6.0/monaco.duckdb) (38 MB).
 2. Menu **roadstyle › Open a duckOSM database…**, choose the file, then **Open**.
-3. The map is on the screen after about 18 seconds (the plugin runs Python in the browser). The street names and arrows follow. The same file opens again in about 3 seconds.
+3. The map is on the screen after about 7 seconds (DuckDB and a Rust module make it in the browser). The same file opens again in about 3 seconds.
 
 ## Route planner
 

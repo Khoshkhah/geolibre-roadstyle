@@ -1,7 +1,7 @@
 """Tests of the plugin in a stand-in for GeoLibre (tests/host.html: a MapLibre map and the host calls the plugin uses).
 
     python -m pytest tests -q                    # fast tests (a few seconds; needs playwright and chromium, and the network for MapLibre)
-    RS_TEST_DB=/path/to/monaco.duckdb python -m pytest tests -q -m slow    # also makes a map of a database with Pyodide (1-2 minutes)
+    RS_TEST_DB=/path/to/monaco.duckdb python -m pytest tests -q -m slow    # also makes a map of a database (DuckDB and the Rust module; needs build.py --files first)
 """
 import functools
 import http.server
@@ -69,7 +69,7 @@ def test_versions_match():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-@pytest.mark.parametrize("f", ["index.js", "py/worker.js", "popup.js"])
+@pytest.mark.parametrize("f", ["index.js", "worker/worker.js", "popup.js"])
 def test_syntax(f):
     subprocess.run(["node", "--check", str(ROOT / f)], check=True)
 
@@ -278,7 +278,7 @@ def test_database_dialog_has_the_colour_choices(host):
     assert labels[0].startswith("duckOSM database") and "Colours" in labels and "Footpaths and cycleways" in labels
     assert host.eval_on_selector_all("[role=dialog] select:nth-of-type(1) option", "(os) => os.map((o) => o.value)")
     themes = host.evaluate("() => [...document.querySelectorAll('[role=dialog] select')].map((s) => [...s.options].map((o) => o.value))")
-    assert themes[1] == ["osm", "google", "grey", "roadstyle"] and themes[3] == ["off", "on"] and themes[4] == ["off", "on"] and themes[5] == ["on", "off"] and len(themes) == 6
+    assert themes[1] == ["osm", "google", "grey", "roadstyle"] and themes[3] == ["off", "on"] and themes[4] == ["on", "off"] and len(themes) == 5   # no 3D bridge decks from a database
     host.keyboard.press("Escape")
     host.evaluate("() => rs.menu.items.find((i) => i.id === 'redraw').onSelect()")       # nothing to redraw yet: a message
     host.wait_for_selector(".rs-pl-toast")
@@ -321,18 +321,18 @@ def test_zip_install_carries_its_files(browser, base, tmp_path):
     page.close()
 
 
-# ---- slow: Pyodide and a real database -------------------------------------------------------------------------------------------
+# ---- slow: a real database (DuckDB and the Rust module)  -------------------------------------------------------------------------------------------
 
 DB = os.environ.get("RS_TEST_DB")
 slow = pytest.mark.skipif(not DB or not Path(DB or "x").exists(), reason="set RS_TEST_DB to a duckOSM .duckdb file")
 
 
 def open_db(page, **choices):
-    """the menu item, then the dialog: the file and the choices (selects by their label's order: mode, theme, paths, ocean, decks, planner)"""
+    """the menu item, then the dialog: the file and the choices (selects by their label's order: mode, theme, paths, ocean, planner)"""
     page.evaluate("() => rs.menu.items.find((i) => i.id === 'db').onSelect()")
     page.wait_for_selector("[role=dialog]")
     page.set_input_files("[role=dialog] input[type=file]", DB)
-    for i, key in enumerate(("mode", "theme", "paths", "ocean", "decks", "planner")):
+    for i, key in enumerate(("mode", "theme", "paths", "ocean", "planner")):
         if key in choices:
             page.select_option(f"[role=dialog] select >> nth={i}", choices[key])
     page.click("[role=dialog] button[type=submit]")
@@ -345,17 +345,18 @@ def style_fingerprint(page):
 @pytest.mark.slow
 @slow
 def test_database_map_and_retry_after_a_failed_start(host):
-    """The first start fails (the Python packages are cut off); the second try must send them again and succeed."""
+    """The first start fails (the worker's data, map/pkgs.bin, is cut off for the dialog's warm-up and the first map); the second try must send
+    it again and succeed."""
     failed = []
 
     def cut(route):
-        if not failed:
+        if len(failed) < 2:                       # the warm-up's request and the first map's
             failed.append(1)
             route.fulfill(status=200, body=b"not a zip")
         else:
             route.continue_()
 
-    host.route("**/py/pkgs.zip", cut)
+    host.route("**/map/pkgs.bin", cut)
     open_db(host)
     host.wait_for_selector("[role=alert]", timeout=240000)             # the first try fails with a message
     assert host.query_selector(".rs-pl-progress") is None
@@ -363,6 +364,7 @@ def test_database_map_and_retry_after_a_failed_start(host):
     n = host.evaluate("() => rs.map.getStyle().layers.length")
     open_db(host)                                                      # the second try works
     host.wait_for_function("(n) => rs.map.getStyle().layers.length > n", arg=n, timeout=360000)
+    host.wait_for_selector(".rs-pl-progress", state="detached", timeout=120000)      # all its layers are added (not the count while they come)
     assert host.evaluate("() => rs.plugin.getProjectState().urls") == []          # a database's map is not saved by address
     types = host.evaluate("() => rs.rows.filter((r) => r.metadata.group === 'road type').map((r) => r.name)")
     assert "residential" in types or "footway" in types                            # the road types of the real data

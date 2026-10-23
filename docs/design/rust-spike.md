@@ -863,3 +863,63 @@ area needs another design (vector tiles).
 **What is left in memory** (for later, if areas between 64,000 and 100,000 roads matter): the source trees while the layers are made (about
 2.4 GB natively for Tartu), and the planner's rows as JSON maps (1.3 GB for a short time). Typed pieces and a typed planner reader would
 make both smaller.
+
+## Step 3 plan: Rust replaces Python in the real plugin, as roadstyle 0.21.0 (2026-10-22)
+
+**Goal.** The plugin `roadstyle` (the same id) makes a database's map with DuckDB (duckdb-wasm) and the Rust module, not Python (Pyodide).
+0.20.1 stays on GitHub for a user who needs the Python version.
+
+**What does not change.** The plugin id, the menu, the dialog's colour choices, the Layers rows and folders, the filters, the route planner,
+"Add a roadstyle layer" (a style file or a URL: no Python, no change), the project state, the zip install.
+
+**The work:**
+
+1. **Move the code out of `spike/`.** The Rust crate to `wasm/` (crate `roadstyle-wasm`), the worker and its SQL (`worker.js`, `roads_sql.js`,
+   `features_sql.js`, `planner_sql.js`) to `worker/`. `spike/` keeps the checks (golden files, `compare.py`, the browser harness, the preview
+   tools), pointed at the new places.
+2. **`build.py`** makes, in place of `py/pkgs.zip` and `py/worker.js`:
+   - `looks.json`: the looks of the 64 choices (`look_of`, from `tools/make_spike_fixture.py`, moved into `build.py`). It needs roadstyle and
+     mapstyle at build time, as now, and a small database (`--db`, default `../duckOSM/monaco.duckdb`): the look does not depend on the
+     database (Monaco and Tartu give the same looks, except the name, which the worker gives).
+   - the wasm module (cargo, wasm-bindgen) and the worker bundle (esbuild); the zip carries them as assets, as now.
+   - The Python versions the looks come from are pinned in `build.py` and checked: roadstyle 0.24.3, mapstyle 0.12.0.
+3. **`index.js`:**
+   - The worker's messages stay the same, without the second message (the names and arrows are in the first style). The style is kept in the
+     browser's storage when it comes (now only with the names and arrows).
+   - The texts: no "loading Python", "the Python worker failed" and so on; "starting DuckDB and the Rust module" instead.
+   - **The 3D bridge decks option leaves the database dialog** (Kaveh: no decks until a new version of them). A style file with decks
+     (`mapstyle --inline`, "Add a roadstyle layer") is drawn as now.
+4. **Remove** `py/worker.js` and `py/pkgs.zip` (the history keeps them).
+5. **Tests:** `tests/test_plugin.py` (the asset names, the failed-start test, the dialog without the decks field), `tests/e2e_geolibre.py`,
+   `tests/e2e_inputs.py`, `tests/probe_timing.py` (the texts); the spike's golden tests and the browser harness at the new places.
+6. **Docs:** `README.md`, `docs/guide.md` (how it works, the times, the network, the limits: 100,000 roads, no decks from a database) and
+   `docs/img/how-it-works.svg` (DuckDB and Rust in place of Python).
+7. **Checks before the release**, all in the real GeoLibre: `tests/e2e_geolibre.py` and `tests/e2e_inputs.py` (Monaco), the preview's test
+   (Monaco and Tartu, three opens each), the 16-choice golden test, `tests/test_plugin.py`. Then the zip, version 0.21.0.
+8. **The release** only after Kaveh has seen the results: GitHub release 0.21.0 as Latest. Then step 4 (the registration in GeoLibre).
+
+**Size.** The zip grows from 0.43 MB to about 1.8 MB (the wasm module and the 64 looks). At run time the plugin loads duckdb-wasm (about 7 MB,
+once, then from the browser's cache) from `cdn.jsdelivr.net`, in place of Pyodide and its packages.
+
+## Step 3: result (2026-10-22)
+
+The work of the plan is done; the release waits for Kaveh.
+
+- **The code.** The crate is `wasm/` (`roadstyle-wasm`), the worker and its SQL are `worker/`. `build.py` makes `map/worker.js` (esbuild) and
+  `map/pkgs.bin` (the 64 looks and the wasm module) in about 30 s, with roadstyle 0.24.3 and mapstyle 0.12.0 (it refuses other versions); `map/`
+  is not in git, the zip carries it. The looks the build makes are equal to the fixture's, so the golden tests cover the plugin's build.
+  `py/` (the Python worker and its packages) and the preview's build are gone.
+- **`index.js`.** No second message (the names and arrows are in the first style), no Python texts, no 3D bridge decks choice. The style is
+  kept in the browser's storage as a Blob: Chrome 156 refuses an IndexedDB value over 133,169,152 bytes, and Tartu's style is 226 MB.
+- **The checks** (all pass): `tests/test_plugin.py` with a real database (20 tests, 17 s; with Python it took 1 to 2 minutes),
+  `tests/e2e_geolibre.py` and `tests/e2e_inputs.py` in the real GeoLibre, `tests/e2e_maps.py` (Monaco and Tartu), `spike/test_compare.py`
+  (9 tests, the 16 choices among them), `spike/worker/run_browser.py` (the SQL roads of the four modes, and the style).
+- **Two test fixes.** The failed-start test cuts the dialog's warm-up request too (the worker recovers within one open otherwise). The
+  database test waits for the progress box to close before it counts the layers (the Rust map came while the count was taken).
+
+| In GeoLibre, click on Open to the finished map | Monaco (13,298 roads) | Tartu (63,965 roads) |
+|---|---|---|
+| First open | 6.7 s | 23.7 s |
+| The same again (from the browser's storage) | 2.7 s | 12.2 s |
+| Other choices | 4.0 s | 20.0 s |
+| roadstyle 0.20.1 (Python), first open | about 18 s | fails (NaN in the JSON) |
